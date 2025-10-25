@@ -1,5 +1,5 @@
 // Package service contains the business logic for the Gomoku game
-// This file implements game room management and online match services (reserved for future PVP feature)
+// This file implements game room management and online match services for PVP feature
 package service
 
 import (
@@ -10,181 +10,152 @@ import (
 	"gomoku-backend/internal/model"
 )
 
-// GameService manages game rooms and online matches (reserved for future implementation)
+// GameService manages game rooms and online matches for PVP feature
 type GameService struct {
-	rooms map[string]*model.MatchRoom
+	rooms map[string]*model.Room
 	mutex sync.RWMutex
 }
 
 // NewGameService creates a new game service instance
 func NewGameService() *GameService {
 	return &GameService{
-		rooms: make(map[string]*model.MatchRoom),
+		rooms: make(map[string]*model.Room),
 	}
 }
 
-// CreateRoom creates a new match room (reserved for future PVP feature)
-func (gs *GameService) CreateRoom(playerID string) (*model.MatchRoom, error) {
+// CreateRoom creates a new match room for PVP feature
+func (gs *GameService) CreateRoom(roomName, playerName string, maxPlayers int) (*model.Room, error) {
 	gs.mutex.Lock()
 	defer gs.mutex.Unlock()
 	
-	roomID := gs.generateRoomID()
+	room := model.NewRoom(roomName, playerName, maxPlayers)
+	gs.rooms[room.ID] = room
 	
-	room := &model.MatchRoom{
-		RoomID: roomID,
-		Players: []model.Player{
-			{
-				ID:   1,
-				Type: "human",
-				Name: playerID,
-			},
-		},
-		Board:     model.NewBoard(),
-		Status:    "waiting",
-		CreatedAt: time.Now(),
-	}
-	
-	gs.rooms[roomID] = room
 	return room, nil
 }
 
-// JoinRoom allows a player to join an existing room (reserved for future PVP feature)
-func (gs *GameService) JoinRoom(roomID, playerID string) (*model.MatchRoom, error) {
+// JoinRoom allows a player to join an existing room
+func (gs *GameService) JoinRoom(roomID, playerName string) (*model.Room, *model.PVPPlayer, error) {
 	gs.mutex.Lock()
 	defer gs.mutex.Unlock()
 	
 	room, exists := gs.rooms[roomID]
 	if !exists {
-		return nil, fmt.Errorf("room not found")
+		return nil, nil, fmt.Errorf("room not found")
 	}
 	
-	if len(room.Players) >= 2 {
-		return nil, fmt.Errorf("room is full")
+	if len(room.Players) >= room.MaxPlayers {
+		return nil, nil, fmt.Errorf("room is full")
 	}
 	
 	if room.Status != "waiting" {
-		return nil, fmt.Errorf("room is not accepting new players")
+		return nil, nil, fmt.Errorf("room is not accepting new players")
 	}
 	
-	// Add second player
-	room.Players = append(room.Players, model.Player{
-		ID:   2,
-		Type: "human",
-		Name: playerID,
-	})
+	player := room.AddPlayer(playerName)
+	if player == nil {
+		return nil, nil, fmt.Errorf("failed to add player to room")
+	}
 	
-	// Start the game
-	room.Status = "playing"
-	
-	return room, nil
+	return room, player, nil
 }
 
-// GetRoom retrieves a room by ID (reserved for future PVP feature)
-func (gs *GameService) GetRoom(roomID string) (*model.MatchRoom, error) {
+// GetRoom retrieves a room by ID
+func (gs *GameService) GetRoom(roomID string) *model.Room {
 	gs.mutex.RLock()
 	defer gs.mutex.RUnlock()
 	
-	room, exists := gs.rooms[roomID]
-	if !exists {
-		return nil, fmt.Errorf("room not found")
-	}
-	
-	return room, nil
+	return gs.rooms[roomID]
 }
 
-// MakeMove processes a move in a multiplayer room (reserved for future PVP feature)
-func (gs *GameService) MakeMove(roomID string, playerID string, x, y int) (*model.MatchRoom, error) {
+// MakeMove processes a player's move in a room
+func (gs *GameService) MakeMove(roomID, playerID string, x, y int) (*model.Room, *model.PVPMove, error) {
 	gs.mutex.Lock()
 	defer gs.mutex.Unlock()
 	
 	room, exists := gs.rooms[roomID]
 	if !exists {
-		return nil, fmt.Errorf("room not found")
+		return nil, nil, fmt.Errorf("room not found")
 	}
 	
-	if room.Status != "playing" {
-		return nil, fmt.Errorf("game is not in progress")
+	if room.Game == nil {
+		return nil, nil, fmt.Errorf("game not started")
 	}
 	
-	// Find player
-	var playerNum int
-	for i, player := range room.Players {
-		if player.Name == playerID {
-			playerNum = i + 1
-			break
-		}
+	if room.Game.Status != "playing" {
+		return nil, nil, fmt.Errorf("game is not in progress")
 	}
 	
-	if playerNum == 0 {
-		return nil, fmt.Errorf("player not found in room")
+	// Validate player
+	player := room.GetPlayer(playerID)
+	if player == nil {
+		return nil, nil, fmt.Errorf("player not found in room")
 	}
 	
-	if room.Board.CurrentPlayer != playerNum {
-		return nil, fmt.Errorf("not your turn")
+	// Validate turn
+	if room.Game.CurrentPlayer != player.PlayerNumber {
+		return nil, nil, fmt.Errorf("not your turn")
 	}
 	
 	// Make the move
-	if !room.Board.MakeMove(x, y, playerNum) {
-		return nil, fmt.Errorf("invalid move")
+	move := room.Game.MakeMove(x, y, playerID, player.PlayerNumber)
+	if move == nil {
+		return nil, nil, fmt.Errorf("invalid move")
 	}
 	
-	// Check game state
-	lastMove := &model.Move{X: x, Y: y, Player: playerNum}
-	gameState := room.Board.GetGameState(lastMove)
-	
-	if gameState.Status != "playing" {
-		room.Status = "finished"
-	}
-	
-	return room, nil
+	return room, move, nil
 }
 
-// CleanupRooms removes old inactive rooms (reserved for future implementation)
+// CleanupRooms removes inactive rooms
 func (gs *GameService) CleanupRooms() {
 	gs.mutex.Lock()
 	defer gs.mutex.Unlock()
 	
-	cutoff := time.Now().Add(-2 * time.Hour) // Remove rooms older than 2 hours
-	
+	now := time.Now()
 	for roomID, room := range gs.rooms {
-		if room.CreatedAt.Before(cutoff) {
+		// Remove rooms that have been inactive for more than 1 hour
+		if now.Sub(room.CreatedAt) > time.Hour {
 			delete(gs.rooms, roomID)
 		}
 	}
 }
 
-// GetActiveRooms returns the number of active rooms (reserved for future implementation)
-func (gs *GameService) GetActiveRooms() int {
+// GetActiveRooms returns all active rooms
+func (gs *GameService) GetActiveRooms() []*model.Room {
 	gs.mutex.RLock()
 	defer gs.mutex.RUnlock()
 	
-	return len(gs.rooms)
-}
-
-// generateRoomID creates a unique room identifier
-func (gs *GameService) generateRoomID() string {
-	// Simple room ID generation - in production, use a more robust method
-	return fmt.Sprintf("room_%d", time.Now().UnixNano())
-}
-
-// BroadcastToRoom sends a message to all players in a room (reserved for WebSocket implementation)
-func (gs *GameService) BroadcastToRoom(roomID string, message interface{}) error {
-	// TODO: Implement WebSocket broadcasting when PVP feature is added
-	// This method will be used to send real-time updates to all players in a room
-	return fmt.Errorf("WebSocket broadcasting not implemented yet")
-}
-
-// GetRoomStatus returns the current status of a room (reserved for future implementation)
-func (gs *GameService) GetRoomStatus(roomID string) (string, error) {
-	room, err := gs.GetRoom(roomID)
-	if err != nil {
-		return "", err
+	var activeRooms []*model.Room
+	for _, room := range gs.rooms {
+		if room.Status == "waiting" || room.Status == "playing" {
+			activeRooms = append(activeRooms, room)
+		}
 	}
 	
-	return room.Status, nil
+	return activeRooms
 }
 
-// LeaveRoom removes a player from a room (reserved for future implementation)
+// StartGame starts the game in a room
+func (gs *GameService) StartGame(roomID string) error {
+	gs.mutex.Lock()
+	defer gs.mutex.Unlock()
+	
+	room, exists := gs.rooms[roomID]
+	if !exists {
+		return fmt.Errorf("room not found")
+	}
+	
+	if !room.CanStartGame() {
+		return fmt.Errorf("cannot start game: not enough players")
+	}
+	
+	room.Game = model.NewPVPGame(roomID)
+	room.Status = "playing"
+	
+	return nil
+}
+
+// LeaveRoom removes a player from a room
 func (gs *GameService) LeaveRoom(roomID, playerID string) error {
 	gs.mutex.Lock()
 	defer gs.mutex.Unlock()
@@ -194,20 +165,77 @@ func (gs *GameService) LeaveRoom(roomID, playerID string) error {
 		return fmt.Errorf("room not found")
 	}
 	
-	// Remove player from room
-	for i, player := range room.Players {
-		if player.Name == playerID {
-			room.Players = append(room.Players[:i], room.Players[i+1:]...)
-			break
-		}
-	}
+	room.RemovePlayer(playerID)
 	
-	// If room becomes empty, delete it
+	// If room is empty, delete it
 	if len(room.Players) == 0 {
 		delete(gs.rooms, roomID)
-	} else if room.Status == "playing" {
-		// If game was in progress, mark as finished
-		room.Status = "finished"
+	}
+	
+	return nil
+}
+
+// GetRoomStatus returns the current status of a room
+func (gs *GameService) GetRoomStatus(roomID string) (string, error) {
+	room := gs.GetRoom(roomID)
+	if room == nil {
+		return "", fmt.Errorf("room not found")
+	}
+	
+	return room.Status, nil
+}
+
+// SetPlayerReady sets a player's ready status
+func (gs *GameService) SetPlayerReady(roomID, playerID string, ready bool) error {
+	gs.mutex.Lock()
+	defer gs.mutex.Unlock()
+	
+	room, exists := gs.rooms[roomID]
+	if !exists {
+		return fmt.Errorf("room not found")
+	}
+	
+	player := room.GetPlayer(playerID)
+	if player == nil {
+		return fmt.Errorf("player not found in room")
+	}
+	
+	player.IsReady = ready
+	room.UpdatedAt = time.Now()
+	
+	return nil
+}
+
+// HandlePlayerDisconnect handles when a player disconnects
+func (gs *GameService) HandlePlayerDisconnect(roomID, playerID string) error {
+	gs.mutex.Lock()
+	defer gs.mutex.Unlock()
+	
+	room, exists := gs.rooms[roomID]
+	if !exists {
+		return fmt.Errorf("room not found")
+	}
+	
+	player := room.GetPlayer(playerID)
+	if player == nil {
+		return fmt.Errorf("player not found in room")
+	}
+	
+	player.IsOnline = false
+	room.UpdatedAt = time.Now()
+	
+	// If game is in progress and player disconnects, end the game
+	if room.Game != nil && room.Game.Status == "playing" {
+		room.Game.Status = "finished"
+		// Set the other player as winner
+		for _, p := range room.Players {
+			if p.ID != playerID {
+				room.Game.Winner = p.PlayerNumber
+				break
+			}
+		}
+		now := time.Now()
+		room.Game.EndedAt = &now
 	}
 	
 	return nil

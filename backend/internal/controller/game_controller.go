@@ -1,36 +1,44 @@
 // Package controller handles HTTP requests and responses for the Gomoku API
-// This file contains game room management endpoints (reserved for future PVP feature)
+// This file contains game room management endpoints for PVP feature
 package controller
 
 import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 
+	"gomoku-backend/internal/model"
 	"gomoku-backend/internal/service"
 )
 
-// GameController handles multiplayer game room requests (reserved for future PVP feature)
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool {
+		return true // Allow all origins for development
+	},
+}
+
+// GameController handles multiplayer game room requests for PVP feature
 type GameController struct {
 	gameService *service.GameService
+	hub         *service.Hub
 }
 
 // NewGameController creates a new game controller instance
 func NewGameController() *GameController {
+	gameService := service.NewGameService()
+	hub := service.NewHub(gameService)
+	go hub.Run()
+	
 	return &GameController{
-		gameService: service.NewGameService(),
+		gameService: gameService,
+		hub:         hub,
 	}
 }
 
-// StartMatch handles POST /api/match/start requests (reserved for future implementation)
-func (gc *GameController) StartMatch(c *gin.Context) {
-	// This endpoint will be used to start online PVP matches
-	// Currently returns a placeholder response
-	
-	var request struct {
-		PlayerID string `json:"playerId" binding:"required"`
-		GameMode string `json:"gameMode"` // "pvp" or "ai"
-	}
+// CreateRoom handles POST /api/rooms requests
+func (gc *GameController) CreateRoom(c *gin.Context) {
+	var request model.CreateRoomRequest
 	
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -40,86 +48,15 @@ func (gc *GameController) StartMatch(c *gin.Context) {
 		return
 	}
 	
-	// For now, only AI mode is supported
-	if request.GameMode == "ai" {
-		c.JSON(http.StatusOK, gin.H{
-			"message":  "AI match started",
-			"gameMode": "ai",
-			"playerId": request.PlayerID,
-		})
-		return
+	// Set default max players if not specified
+	if request.MaxPlayers == 0 {
+		request.MaxPlayers = 2
 	}
 	
-	// PVP mode - reserved for future implementation
-	if request.GameMode == "pvp" {
-		room, err := gc.gameService.CreateRoom(request.PlayerID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error":   "Failed to create room",
-				"details": err.Error(),
-			})
-			return
-		}
-		
-		c.JSON(http.StatusOK, gin.H{
-			"message":  "Room created, waiting for opponent",
-			"roomId":   room.RoomID,
-			"gameMode": "pvp",
-			"status":   room.Status,
-		})
-		return
-	}
-	
-	c.JSON(http.StatusBadRequest, gin.H{
-		"error": "Invalid game mode. Use 'ai' or 'pvp'",
-	})
-}
-
-// JoinMatch handles POST /api/match/join requests (reserved for future implementation)
-func (gc *GameController) JoinMatch(c *gin.Context) {
-	var request struct {
-		RoomID   string `json:"roomId" binding:"required"`
-		PlayerID string `json:"playerId" binding:"required"`
-	}
-	
-	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Invalid request format",
-			"details": err.Error(),
-		})
-		return
-	}
-	
-	room, err := gc.gameService.JoinRoom(request.RoomID, request.PlayerID)
+	room, err := gc.gameService.CreateRoom(request.RoomName, request.PlayerName, request.MaxPlayers)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Failed to join room",
-			"details": err.Error(),
-		})
-		return
-	}
-	
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Successfully joined room",
-		"room":    room,
-	})
-}
-
-// GetMatchStatus handles GET /api/match/status/:roomId requests (reserved for future implementation)
-func (gc *GameController) GetMatchStatus(c *gin.Context) {
-	roomID := c.Param("roomId")
-	
-	if roomID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Room ID is required",
-		})
-		return
-	}
-	
-	room, err := gc.gameService.GetRoom(roomID)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error":   "Room not found",
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to create room",
 			"details": err.Error(),
 		})
 		return
@@ -130,15 +67,10 @@ func (gc *GameController) GetMatchStatus(c *gin.Context) {
 	})
 }
 
-// MakeMove handles POST /api/match/:roomId/move requests (reserved for future implementation)
-func (gc *GameController) MakeMove(c *gin.Context) {
-	roomID := c.Param("roomId")
-	
-	var request struct {
-		PlayerID string `json:"playerId" binding:"required"`
-		X        int    `json:"x" binding:"required"`
-		Y        int    `json:"y" binding:"required"`
-	}
+// JoinRoom handles POST /api/rooms/:id/join requests
+func (gc *GameController) JoinRoom(c *gin.Context) {
+	roomID := c.Param("id")
+	var request model.JoinRoomRequest
 	
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -148,32 +80,83 @@ func (gc *GameController) MakeMove(c *gin.Context) {
 		return
 	}
 	
-	// Validate coordinates
-	if request.X < 0 || request.X >= 15 || request.Y < 0 || request.Y >= 15 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Coordinates must be within 0-14 range",
-		})
-		return
-	}
-	
-	room, err := gc.gameService.MakeMove(roomID, request.PlayerID, request.X, request.Y)
+	room, player, err := gc.gameService.JoinRoom(roomID, request.PlayerName)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Failed to make move",
+			"error":   "Failed to join room",
 			"details": err.Error(),
 		})
 		return
 	}
 	
+	// Broadcast room update to all clients in the room
+	gc.hub.BroadcastToRoom(roomID, model.WSMessage{
+		Type: "room_update",
+		Data: model.RoomUpdateData{
+			Room: room,
+		},
+	})
+	
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Move made successfully",
-		"room":    room,
+		"room":   room,
+		"player": player,
 	})
 }
 
-// LeaveMatch handles POST /api/match/:roomId/leave requests (reserved for future implementation)
-func (gc *GameController) LeaveMatch(c *gin.Context) {
-	roomID := c.Param("roomId")
+// GetRoom handles GET /api/rooms/:id requests
+func (gc *GameController) GetRoom(c *gin.Context) {
+	roomID := c.Param("id")
+	
+	room := gc.gameService.GetRoom(roomID)
+	if room == nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Room not found",
+		})
+		return
+	}
+	
+	c.JSON(http.StatusOK, gin.H{
+		"room": room,
+	})
+}
+
+// StartGame handles POST /api/rooms/:id/start requests
+func (gc *GameController) StartGame(c *gin.Context) {
+	roomID := c.Param("id")
+	
+	err := gc.gameService.StartGame(roomID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Failed to start game",
+			"details": err.Error(),
+		})
+		return
+	}
+	
+	room := gc.gameService.GetRoom(roomID)
+	if room == nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Room not found",
+		})
+		return
+	}
+	
+	// Broadcast game start to all clients in the room
+	gc.hub.BroadcastToRoom(roomID, model.WSMessage{
+		Type: "game_start",
+		Data: model.GameUpdateData{
+			Game: room.Game,
+		},
+	})
+	
+	c.JSON(http.StatusOK, gin.H{
+		"room": room,
+	})
+}
+
+// LeaveRoom handles POST /api/rooms/:id/leave requests
+func (gc *GameController) LeaveRoom(c *gin.Context) {
+	roomID := c.Param("id")
 	
 	var request struct {
 		PlayerID string `json:"playerId" binding:"required"`
@@ -196,28 +179,127 @@ func (gc *GameController) LeaveMatch(c *gin.Context) {
 		return
 	}
 	
+	// Broadcast room update to remaining clients
+	room := gc.gameService.GetRoom(roomID)
+	if room != nil {
+		gc.hub.BroadcastToRoom(roomID, model.WSMessage{
+			Type: "room_update",
+			Data: model.RoomUpdateData{
+				Room: room,
+			},
+		})
+	}
+	
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Successfully left the room",
 	})
 }
 
-// GetActiveRooms handles GET /api/match/rooms requests (reserved for future implementation)
+// GetActiveRooms handles GET /api/rooms requests
 func (gc *GameController) GetActiveRooms(c *gin.Context) {
-	activeCount := gc.gameService.GetActiveRooms()
+	rooms := gc.gameService.GetActiveRooms()
 	
 	c.JSON(http.StatusOK, gin.H{
-		"activeRooms": activeCount,
-		"message":     "Active rooms count retrieved",
+		"rooms": rooms,
 	})
 }
 
-// HandleWebSocket handles WebSocket connections for real-time gameplay (reserved for future implementation)
+// HandleWebSocket handles WebSocket connections for real-time gameplay
 func (gc *GameController) HandleWebSocket(c *gin.Context) {
-	// This method will handle WebSocket connections for real-time PVP gameplay
-	// Implementation will be added when PVP feature is developed
+	roomID := c.Query("roomId")
+	playerID := c.Query("playerId")
 	
-	c.JSON(http.StatusNotImplemented, gin.H{
-		"error":   "WebSocket support not implemented yet",
-		"message": "This feature is reserved for future PVP implementation",
+	if roomID == "" || playerID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "roomId and playerId are required",
+		})
+		return
+	}
+	
+	// Use the hub's ServeWS method to handle the WebSocket connection
+	gc.hub.ServeWS(c.Writer, c.Request, roomID, playerID)
+}
+
+// MakeMove handles POST /api/rooms/:id/move requests
+func (gc *GameController) MakeMove(c *gin.Context) {
+	roomID := c.Param("id")
+	var request model.MakeMoveRequest
+	
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid request format",
+			"details": err.Error(),
+		})
+		return
+	}
+	
+	room, move, err := gc.gameService.MakeMove(roomID, request.PlayerID, request.X, request.Y)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Failed to make move",
+			"details": err.Error(),
+		})
+		return
+	}
+	
+	// Broadcast move to all clients in the room
+	gc.hub.BroadcastToRoom(roomID, model.WSMessage{
+		Type: "game_update",
+		Data: model.GameUpdateData{
+			Game:     room.Game,
+			LastMove: move,
+		},
+	})
+	
+	c.JSON(http.StatusOK, gin.H{
+		"room": room,
+		"move": move,
+	})
+}
+
+// SetPlayerReady handles POST /api/rooms/:id/ready requests
+func (gc *GameController) SetPlayerReady(c *gin.Context) {
+	roomID := c.Param("id")
+	
+	var request struct {
+		PlayerID string `json:"playerId" binding:"required"`
+		Ready    bool   `json:"ready" binding:"required"`
+	}
+	
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid request format",
+			"details": err.Error(),
+		})
+		return
+	}
+	
+	err := gc.gameService.SetPlayerReady(roomID, request.PlayerID, request.Ready)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Failed to set player ready status",
+			"details": err.Error(),
+		})
+		return
+	}
+	
+	room := gc.gameService.GetRoom(roomID)
+	if room == nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Room not found",
+		})
+		return
+	}
+	
+	// Broadcast room update to all clients in the room
+	gc.hub.BroadcastToRoom(roomID, model.WSMessage{
+		Type: "room_update",
+		Data: model.RoomUpdateData{
+			Room: room,
+		},
+	})
+	
+	c.JSON(http.StatusOK, gin.H{
+		"room": room,
 	})
 }
