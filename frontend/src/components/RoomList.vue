@@ -25,6 +25,10 @@
       <!-- 房间列表卡片 -->
       <div class="card rooms-card">
         <h2>可用房间</h2>
+        <div class="join-form">
+          <input v-model.trim="newRoom.playerName" placeholder="输入你的玩家昵称" class="player-name-input" />
+          <p class="helper-text">加入房间前请先输入你的昵称</p>
+        </div>
         <div v-if="rooms.length === 0" class="empty">暂无可用房间，创建一个房间开始对战吧!</div>
         <ul v-else class="rooms-list">
           <li v-for="room in rooms" :key="room.id" class="room-item">
@@ -32,7 +36,7 @@
               <span class="room-name">{{ room.name }}</span>
               <span class="room-capacity">{{ room.players.length }}/{{ room.maxPlayers }}</span>
             </div>
-            <button class="secondary-button" @click="join(room.id)" :disabled="isLoading">加入</button>
+            <button class="secondary-button" @click="join(room.id)" :disabled="isLoading || !newRoom.playerName.trim()">加入</button>
           </li>
         </ul>
       </div>
@@ -118,8 +122,15 @@ async function createRoom() {
 }
 
 async function join(roomId: string) {
+  // 验证玩家名称
+  const playerName = newRoom.value.playerName.trim()
+  if (!playerName) {
+    pvpStore.error = '请输入玩家名称'
+    return
+  }
+  
   try {
-    await pvpStore.joinRoom(roomId, { playerName: newRoom.value.playerName.trim() })
+    await pvpStore.joinRoom(roomId, { playerName })
     showSuccess('加入成功，正在进入房间...')
     if (pvpStore.currentRoom) {
       router.push(`/room/${pvpStore.currentRoom.id}`)
@@ -205,6 +216,25 @@ input:focus, select:focus { border-color: #667eea; }
 .primary-button:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .helper-text { color: #666; margin-top: 8px; font-size: 0.9rem; }
+
+.join-form {
+  margin-bottom: 16px;
+  padding: 16px;
+  background: #f8f9ff;
+  border-radius: 12px;
+  border: 1px solid #e4e8ff;
+}
+
+.player-name-input {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  outline: none;
+  font-size: 1rem;
+  margin-bottom: 8px;
+}
+.player-name-input:focus { border-color: #667eea; }
 
 .rooms-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 12px; }
 .room-item { display: flex; align-items: center; justify-content: space-between; padding: 12px; border: 1px solid #eee; border-radius: 12px; }

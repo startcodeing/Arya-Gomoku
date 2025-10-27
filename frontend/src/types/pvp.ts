@@ -34,7 +34,7 @@ export interface PVPGame {
 export interface Move {
   x: number
   y: number
-  player: string
+  playerId: string
   timestamp: string
 }
 

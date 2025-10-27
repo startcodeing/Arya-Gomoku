@@ -30,13 +30,36 @@
       <!-- 左侧：游戏棋盘 -->
       <div class="board-section">
         <div class="board-container">
+          <!-- 当前回合提示 -->
+          <div v-if="game?.status === 'playing'" class="turn-indicator-banner">
+            <div v-if="isMyTurn" class="my-turn-banner">
+              <div class="turn-icon">🎯</div>
+              <div class="turn-text">
+                <h3>轮到你了！</h3>
+                <p v-if="moveCount === 0 && currentPlayerColor === PLAYER_COLORS.BLACK">
+                  你执黑子，请先落子
+                </p>
+                <p v-else>点击棋盘空白处落子</p>
+              </div>
+            </div>
+            <div v-else class="opponent-turn-banner">
+              <div class="turn-icon">⏳</div>
+              <div class="turn-text">
+                <h3>等待对手落子</h3>
+                <p v-if="moveCount === 0">
+                  {{ getCurrentTurnPlayerName() }} 执黑子，正在先手落子...
+                </p>
+                <p v-else>{{ getCurrentTurnPlayerName() }} 正在思考中...</p>
+              </div>
+            </div>
+          </div>
+          
           <div class="board-wrapper">
             <Board
               :board="gameBoard"
-              :current-player="currentPlayerColor"
+              :current-player="currentBoardPlayer"
               :last-move="lastMove"
               :can-move="canMakeMove"
-              :highlight-moves="highlightMoves"
               @move="handleMove"
             />
           </div>
@@ -134,7 +157,7 @@
               @click="highlightMove(move)"
             >
               <span class="move-number">{{ index + 1 }}</span>
-              <span class="move-player">{{ getPlayerName(move.player) }}</span>
+              <span class="move-player">{{ getPlayerName(move.playerId) }}</span>
               <span class="move-position">({{ move.x + 1 }}, {{ move.y + 1 }})</span>
             </div>
             
@@ -257,10 +280,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { usePvpStore } from '../stores/pvp'
-import type { Player, Room } from '../types/pvp'
+import type { Player as PVPPlayer, Room, GameResult, Move } from '../types/pvp'
+import { BOARD_SIZE, PLAYER_COLORS } from '../types/pvp'
+import { Player } from '../types/game'
+import Board from './Board.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -273,7 +299,7 @@ const loadingText = ref('加载中...')
 const successMessage = ref('')
 const showGameResult = ref(false)
 const gameResult = ref<GameResult | null>(null)
-const highlightMoves = ref<{x: number, y: number}[]>([])
+
 const gameStartTime = ref<Date | null>(null)
 const gameDurationInterval = ref<number | null>(null)
 
@@ -324,6 +350,12 @@ const currentPlayerColor = computed(() => {
   return currentGamePlayer?.color === 'white' ? PLAYER_COLORS.WHITE : PLAYER_COLORS.BLACK
 })
 
+const currentBoardPlayer = computed(() => {
+  // 在PVP游戏中，如果轮到当前玩家，则返回HUMAN，否则返回AI
+  // 这样Board组件就知道是否应该响应点击事件
+  return isMyTurn.value ? Player.HUMAN : Player.AI
+})
+
 const canMakeMove = computed(() => {
   return game.value?.status === 'playing' && 
          isMyTurn.value && 
@@ -332,6 +364,13 @@ const canMakeMove = computed(() => {
 })
 
 // 方法
+function getCurrentTurnPlayerName() {
+  if (!game.value?.currentPlayer) return '对手'
+  
+  const currentGamePlayer = gamePlayers.value.find(p => p.id === game.value?.currentPlayer)
+  return currentGamePlayer?.name || '对手'
+}
+
 async function handleMove(x: number, y: number) {
   if (!canMakeMove.value) return
   
@@ -390,12 +429,8 @@ function sendMessage() {
 }
 
 function highlightMove(move: Move) {
-  highlightMoves.value = [{ x: move.x, y: move.y }]
-  
-  // 清除高亮
-  setTimeout(() => {
-    highlightMoves.value = []
-  }, 2000)
+  // TODO: 实现棋子高亮功能
+  console.log('Highlighting move:', move)
 }
 
 function getPlayerColor(playerId: string): 'black' | 'white' {
@@ -406,7 +441,7 @@ function getPlayerColor(playerId: string): 'black' | 'white' {
   return playerIndex === 0 ? 'black' : 'white'
 }
 
-function isPlayerTurn(player: Player): boolean {
+function isPlayerTurn(player: PVPPlayer): boolean {
   return game.value?.currentPlayer === player.id
 }
 
@@ -696,6 +731,71 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   gap: 20px;
+}
+
+.turn-indicator-banner {
+  width: 100%;
+  max-width: 600px;
+  margin-bottom: 10px;
+}
+
+.my-turn-banner, .opponent-turn-banner {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 15px 20px;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  animation: fadeIn 0.5s ease;
+}
+
+.my-turn-banner {
+  background: linear-gradient(135deg, #4CAF50, #45a049);
+  color: white;
+  border: 2px solid #4CAF50;
+}
+
+.opponent-turn-banner {
+  background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+  color: #495057;
+  border: 2px solid #dee2e6;
+}
+
+.turn-icon {
+  font-size: 2rem;
+  animation: pulse 2s infinite;
+}
+
+.turn-text h3 {
+  margin: 0 0 5px 0;
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.turn-text p {
+  margin: 0;
+  font-size: 0.9rem;
+  opacity: 0.9;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+  }
 }
 
 .board-wrapper {

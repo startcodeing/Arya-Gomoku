@@ -185,19 +185,62 @@ export const usePvpStore = defineStore('pvp', () => {
   }
 
   // 发送聊天消息
-  function sendChatMessage(message: string) {
-    if (!currentPlayer.value || !currentRoom.value) return
-    
+  async function sendChatMessage(message: string) {
+    if (!currentRoom.value || !currentPlayer.value) {
+      throw new Error('未加入房间或玩家信息不存在')
+    }
+
     const ws = getGlobalWebSocketService()
+    if (!ws.isConnected()) {
+      throw new Error('WebSocket未连接')
+    }
+
     ws.send({
       type: 'chat_message',
       data: {
+        roomId: currentRoom.value.id,
         playerId: currentPlayer.value.id,
-        playerName: currentPlayer.value.name,
-        message: message.trim(),
-        timestamp: new Date().toISOString()
+        message: message
       }
     })
+  }
+
+  // 进行移动
+  async function makeMove(x: number, y: number) {
+    if (!currentRoom.value || !currentPlayer.value) {
+      throw new Error('未加入房间或玩家信息不存在')
+    }
+
+    if (!currentGame.value) {
+      throw new Error('游戏未开始')
+    }
+
+    if (currentGame.value.currentPlayer !== currentPlayer.value.id) {
+      throw new Error('不是你的回合')
+    }
+
+    try {
+      isLoading.value = true
+      error.value = null
+
+      const response = await pvpApi.makeMove(currentRoom.value.id, {
+        x,
+        y,
+        playerId: currentPlayer.value.id
+      })
+
+      // 更新游戏状态
+      if (response.room) {
+        currentRoom.value = response.room
+        currentGame.value = response.room.game
+      }
+
+    } catch (err: any) {
+      error.value = err.message || '移动失败'
+      throw err
+    } finally {
+      isLoading.value = false
+    }
   }
 
   // 清除错误
@@ -313,6 +356,7 @@ export const usePvpStore = defineStore('pvp', () => {
     leaveRoom,
     toggleReady,
     startGame,
+    makeMove,
     sendChatMessage,
     clearError,
     handleWebSocketMessage,

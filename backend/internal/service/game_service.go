@@ -93,12 +93,12 @@ func (gs *GameService) MakeMove(roomID, playerID string, x, y int) (*model.Room,
 	}
 	
 	// Validate turn
-	if room.Game.CurrentPlayer != player.PlayerNumber {
+	if room.Game.CurrentPlayer != playerID {
 		return nil, nil, fmt.Errorf("not your turn")
 	}
 	
 	// Make the move
-	move := room.Game.MakeMove(x, y, playerID, player.PlayerNumber)
+	move := room.Game.MakeMove(x, y, playerID, player.PlayerNumber, room)
 	if move == nil {
 		return nil, nil, fmt.Errorf("invalid move")
 	}
@@ -149,7 +149,7 @@ func (gs *GameService) StartGame(roomID string) error {
 		return fmt.Errorf("cannot start game: not enough players")
 	}
 	
-	room.Game = model.NewPVPGame(roomID)
+	room.Game = model.NewPVPGame(room)
 	room.Status = "playing"
 	
 	return nil
@@ -230,7 +230,7 @@ func (gs *GameService) HandlePlayerDisconnect(roomID, playerID string) error {
 		// Set the other player as winner
 		for _, p := range room.Players {
 			if p.ID != playerID {
-				room.Game.Winner = p.PlayerNumber
+				room.Game.Winner = p.ID
 				break
 			}
 		}

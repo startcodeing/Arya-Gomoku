@@ -36,8 +36,8 @@ type PVPGame struct {
 	RoomID        string     `json:"roomId"`
 	Status        string     `json:"status"` // playing, finished
 	Board         [][]int    `json:"board"`
-	CurrentPlayer int        `json:"currentPlayer"`
-	Winner        int        `json:"winner"`
+	CurrentPlayer string     `json:"currentPlayer"` // Player ID of current player
+	Winner        string     `json:"winner"`        // Player ID of winner
 	MoveCount     int        `json:"moveCount"`
 	Moves         []*PVPMove `json:"moves"`
 	StartedAt     time.Time  `json:"startedAt"`
@@ -133,7 +133,7 @@ func NewRoom(name, creatorName string, maxPlayers int) *Room {
 }
 
 // NewPVPGame creates a new PVP game
-func NewPVPGame(roomID string) *PVPGame {
+func NewPVPGame(room *Room) *PVPGame {
 	gameID := uuid.New().String()
 	
 	// Initialize 15x15 board
@@ -142,13 +142,25 @@ func NewPVPGame(roomID string) *PVPGame {
 		board[i] = make([]int, 15)
 	}
 	
+	// Set the first player (PlayerNumber 1) as the starting player
+	var firstPlayerID string
+	if len(room.Players) > 0 {
+		// Find the player with PlayerNumber 1 (first player gets black pieces)
+		for _, player := range room.Players {
+			if player.PlayerNumber == 1 {
+				firstPlayerID = player.ID
+				break
+			}
+		}
+	}
+	
 	return &PVPGame{
 		ID:            gameID,
-		RoomID:        roomID,
+		RoomID:        room.ID,
 		Status:        "playing",
 		Board:         board,
-		CurrentPlayer: 1, // Player 1 starts first
-		Winner:        0,
+		CurrentPlayer: firstPlayerID, // First player (black) starts first
+		Winner:        "",
 		MoveCount:     0,
 		Moves:         []*PVPMove{},
 		StartedAt:     time.Now(),
@@ -227,8 +239,8 @@ func (g *PVPGame) IsValidMove(x, y int) bool {
 }
 
 // MakeMove makes a move in the game
-func (g *PVPGame) MakeMove(x, y int, playerID string, playerNumber int) *PVPMove {
-	if !g.IsValidMove(x, y) || g.CurrentPlayer != playerNumber {
+func (g *PVPGame) MakeMove(x, y int, playerID string, playerNumber int, room *Room) *PVPMove {
+	if !g.IsValidMove(x, y) || g.CurrentPlayer != playerID {
 		return nil
 	}
 	
@@ -249,7 +261,7 @@ func (g *PVPGame) MakeMove(x, y int, playerID string, playerNumber int) *PVPMove
 	
 	// Check for win
 	if g.CheckWin(x, y, playerNumber) {
-		g.Winner = playerNumber
+		g.Winner = playerID
 		g.Status = "finished"
 		now := time.Now()
 		g.EndedAt = &now
@@ -258,8 +270,13 @@ func (g *PVPGame) MakeMove(x, y int, playerID string, playerNumber int) *PVPMove
 		now := time.Now()
 		g.EndedAt = &now
 	} else {
-		// Switch player
-		g.CurrentPlayer = 3 - playerNumber
+		// Switch to the other player
+		for _, player := range room.Players {
+			if player.ID != playerID {
+				g.CurrentPlayer = player.ID
+				break
+			}
+		}
 	}
 	
 	return move

@@ -245,8 +245,8 @@
             >
               <div class="col-step">{{ index + 1 }}</div>
               <div class="col-player">
-                <span class="player-name">{{ getPlayerName(move.player) }}</span>
-                <span class="color-indicator" :class="getPlayerColor(move.player)"></span>
+                <span class="player-name">{{ getPlayerName(move.playerId) }}</span>
+                <span class="color-indicator" :class="getPlayerColor(move.playerId)"></span>
               </div>
               <div class="col-position">({{ move.x + 1 }}, {{ move.y + 1 }})</div>
               <div class="col-time">{{ formatMoveTime(move.timestamp, index) }}</div>
@@ -390,7 +390,7 @@ const playersWithStats = computed(() => {
   const players = gameResult.value.players || []
   
   return players.map(player => {
-    const playerMoves = gameResult.value!.moves.filter(move => move.player === player.id)
+    const playerMoves = gameResult.value!.moves.filter(move => move.playerId === player.id)
     const moveCount = playerMoves.length
     
     // 计算平均用时（简化计算）
