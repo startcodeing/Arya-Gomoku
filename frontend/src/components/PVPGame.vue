@@ -565,6 +565,35 @@ watch(() => game.value?.status, (newStatus, oldStatus) => {
   }
 })
 
+// 页面关闭时的清理函数
+const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+  // 使用 sendBeacon API 确保在页面关闭时能可靠地发送离开房间请求
+  if (room.value && player.value) {
+    const url = `http://localhost:8080/api/rooms/${room.value.id}/leave`
+    const data = JSON.stringify({ playerId: player.value.id })
+    
+    // 尝试使用 sendBeacon API（更可靠）
+    if (navigator.sendBeacon) {
+      const blob = new Blob([data], { type: 'application/json' })
+      navigator.sendBeacon(url, blob)
+    } else {
+      // 降级到同步 XMLHttpRequest（作为备选方案）
+      try {
+        const xhr = new XMLHttpRequest()
+        xhr.open('POST', url, false) // 同步请求
+        xhr.setRequestHeader('Content-Type', 'application/json')
+        xhr.send(data)
+      } catch (error) {
+        console.warn('页面关闭时离开房间失败:', error)
+      }
+    }
+    
+    // 立即断开WebSocket连接
+    const ws = getGlobalWebSocketService()
+    ws.disconnect()
+  }
+}
+
 // 生命周期
 onMounted(async () => {
   const roomId = route.params.id as string
@@ -605,10 +634,16 @@ onMounted(async () => {
     startGameTimer()
   }
   
+  // 监听页面关闭事件
+  window.addEventListener('beforeunload', handleBeforeUnload)
+  
   scrollChatToBottom()
 })
 
 onUnmounted(() => {
+  // 移除页面关闭事件监听器
+  window.removeEventListener('beforeunload', handleBeforeUnload)
+  
   stopGameTimer()
 })
 </script>

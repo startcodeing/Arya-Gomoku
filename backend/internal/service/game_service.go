@@ -4,6 +4,7 @@ package service
 
 import (
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -28,8 +29,20 @@ func (gs *GameService) CreateRoom(roomName, playerName string, maxPlayers int) (
 	gs.mutex.Lock()
 	defer gs.mutex.Unlock()
 	
+	log.Printf("开始创建房间: roomName=%s, playerName=%s, maxPlayers=%d", roomName, playerName, maxPlayers)
+	
 	room := model.NewRoom(roomName, playerName, maxPlayers)
+	log.Printf("房间创建成功: roomID=%s, roomName=%s", room.ID, room.Name)
+	
 	gs.rooms[room.ID] = room
+	log.Printf("房间已存储到内存，当前房间总数: %d", len(gs.rooms))
+	
+	// 验证房间是否正确存储
+	if storedRoom := gs.rooms[room.ID]; storedRoom != nil {
+		log.Printf("验证成功: 房间 %s 已正确存储", room.ID)
+	} else {
+		log.Printf("警告: 房间 %s 存储失败", room.ID)
+	}
 	
 	return room, nil
 }
@@ -65,7 +78,25 @@ func (gs *GameService) GetRoom(roomID string) *model.Room {
 	gs.mutex.RLock()
 	defer gs.mutex.RUnlock()
 	
-	return gs.rooms[roomID]
+	log.Printf("尝试获取房间: roomID=%s", roomID)
+	log.Printf("当前内存中的房间总数: %d", len(gs.rooms))
+	
+	// 列出所有房间ID用于调试
+	if len(gs.rooms) > 0 {
+		log.Printf("当前存储的房间ID列表:")
+		for id, room := range gs.rooms {
+			log.Printf("  - 房间ID: %s, 房间名: %s, 状态: %s", id, room.Name, room.Status)
+		}
+	}
+	
+	room := gs.rooms[roomID]
+	if room != nil {
+		log.Printf("房间获取成功: roomID=%s, roomName=%s, status=%s", room.ID, room.Name, room.Status)
+	} else {
+		log.Printf("房间未找到: roomID=%s", roomID)
+	}
+	
+	return room
 }
 
 // MakeMove processes a player's move in a room
@@ -221,9 +252,6 @@ func (gs *GameService) HandlePlayerDisconnect(roomID, playerID string) error {
 		return fmt.Errorf("player not found in room")
 	}
 	
-	player.IsOnline = false
-	room.UpdatedAt = time.Now()
-	
 	// If game is in progress and player disconnects, end the game
 	if room.Game != nil && room.Game.Status == "playing" {
 		room.Game.Status = "finished"
@@ -236,6 +264,20 @@ func (gs *GameService) HandlePlayerDisconnect(roomID, playerID string) error {
 		}
 		now := time.Now()
 		room.Game.EndedAt = &now
+	}
+	
+	// Remove player from room to allow reuse
+	room.RemovePlayer(playerID)
+	room.UpdatedAt = time.Now()
+	
+	// If room is empty, delete it
+	if len(room.Players) == 0 {
+		delete(gs.rooms, roomID)
+	} else {
+		// Reset room status to waiting if there are remaining players
+		room.Status = "waiting"
+		// Reset game if it exists
+		room.Game = nil
 	}
 	
 	return nil

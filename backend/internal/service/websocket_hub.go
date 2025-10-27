@@ -96,6 +96,35 @@ func (h *Hub) registerClient(client *Client) {
 			h.rooms[client.RoomID] = make(map[*Client]bool)
 		}
 		h.rooms[client.RoomID][client] = true
+		
+		// Send current room state to the newly connected client
+		room := h.gameService.GetRoom(client.RoomID)
+		if room != nil {
+			updateData := model.RoomUpdateData{
+				Room:   room,
+				Player: client.Player,
+			}
+			
+			// Send room state to the new client
+			message := model.WSMessage{
+				Type: "room_updated",
+				Data: updateData,
+			}
+			
+			// Send directly to this client
+			h.sendToClient(client, message)
+			
+			// Also send current game state if game is in progress
+			if room.Status == "playing" && room.Game != nil {
+				gameMessage := model.WSMessage{
+					Type: "game_update",
+					Data: model.GameUpdateData{
+						Game: room.Game,
+					},
+				}
+				h.sendToClient(client, gameMessage)
+			}
+		}
 	}
 
 	log.Printf("Client %s registered for room %s", client.ID, client.RoomID)
@@ -121,6 +150,19 @@ func (h *Hub) unregisterClient(client *Client) {
 		// Handle player leaving
 		if client.Player != nil {
 			h.gameService.HandlePlayerDisconnect(client.RoomID, client.Player.ID)
+			
+			// Broadcast room update to remaining clients after player disconnect
+			room := h.gameService.GetRoom(client.RoomID)
+			if room != nil {
+				updateData := model.RoomUpdateData{
+					Room:   room,
+					Player: client.Player,
+				}
+				h.BroadcastToRoom(client.RoomID, model.WSMessage{
+					Type: "player_left",
+					Data: updateData,
+				})
+			}
 		}
 
 		log.Printf("Client %s unregistered from room %s", client.ID, client.RoomID)
@@ -172,6 +214,29 @@ func (h *Hub) BroadcastToRoom(roomID string, message interface{}) {
 		log.Printf("消息广播完成，成功发送给 %d 个客户端", clientCount)
 	} else {
 		log.Printf("房间 %s 不存在", roomID)
+	}
+}
+
+// sendToClient sends a message to a specific client
+func (h *Hub) sendToClient(client *Client, message interface{}) {
+	messageBytes, err := json.Marshal(message)
+	if err != nil {
+		log.Printf("Error marshaling message for client %s: %v", client.ID, err)
+		return
+	}
+
+	select {
+	case client.Send <- messageBytes:
+		log.Printf("消息已发送给客户端 %s", client.ID)
+	default:
+		log.Printf("客户端 %s 发送失败，清理连接", client.ID)
+		close(client.Send)
+		h.mutex.Lock()
+		delete(h.clients, client)
+		if roomClients, exists := h.rooms[client.RoomID]; exists {
+			delete(roomClients, client)
+		}
+		h.mutex.Unlock()
 	}
 }
 

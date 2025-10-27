@@ -119,7 +119,7 @@ export const matchApi = {
   // 离开房间
   async leaveRoom(roomId: string, playerId: string): Promise<ApiResponse> {
     try {
-      const response = await api.post(`/match/${roomId}/leave`, { playerId })
+      const response = await api.post(`/rooms/${roomId}/leave`, { playerId })
       return response.data
     } catch (error: any) {
       console.error('离开房间失败:', error)

@@ -126,11 +126,18 @@ export const usePvpStore = defineStore('pvp', () => {
 
   // 离开房间
   async function leaveRoom() {
-    if (!currentRoom.value) return
+    if (!currentRoom.value || !currentPlayer.value) return
     
     isLoading.value = true
     error.value = null
     try {
+      // 先调用后端API离开房间
+      try {
+        await pvpApi.leaveRoom(currentRoom.value.id, currentPlayer.value.id)
+      } catch (apiError) {
+        console.warn('调用离开房间API失败，继续断开WebSocket:', apiError)
+      }
+      
       // 断开WebSocket连接
       const ws = getGlobalWebSocketService()
       ws.disconnect()

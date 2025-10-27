@@ -7,6 +7,26 @@
       <div class="room-info">
         <h1>{{ room?.name || '房间大厅' }}</h1>
         <p class="room-id">房间ID: {{ room?.id }}</p>
+        <div class="invite-section">
+          <div class="invite-link-container">
+            <input 
+              ref="inviteLinkInput"
+              :value="inviteLink" 
+              readonly 
+              class="invite-link-input"
+              placeholder="生成邀请链接..."
+            />
+            <button 
+              @click="copyInviteLink" 
+              class="copy-button"
+              :class="{ 'copied': copySuccess }"
+              :disabled="!inviteLink"
+            >
+              {{ copySuccess ? '已复制!' : '复制链接' }}
+            </button>
+          </div>
+          <p class="invite-hint">分享此链接邀请朋友加入房间</p>
+        </div>
       </div>
       <div class="connection-status" :class="connectionStatus">
         <span class="status-dot"></span>
@@ -186,6 +206,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { usePvpStore } from '../stores/pvp'
+import { getGlobalWebSocketService } from '../services/websocket'
 import type { Player } from '../types/pvp'
 
 const router = useRouter()
@@ -196,6 +217,8 @@ const pvpStore = usePvpStore()
 const newMessage = ref('')
 const chatMessagesRef = ref<HTMLElement>()
 const loadingText = ref('加载中...')
+const inviteLinkInput = ref<HTMLInputElement>()
+const copySuccess = ref(false)
 
 // 计算属性
 const room = computed(() => pvpStore.currentRoom)
@@ -208,6 +231,13 @@ const connectionStatus = computed(() => pvpStore.connectionStatus)
 const canStartGame = computed(() => pvpStore.canStartGame)
 
 const successMessage = ref('')
+
+// 邀请链接计算属性
+const inviteLink = computed(() => {
+  if (!room.value?.id) return ''
+  const baseUrl = window.location.origin
+  return `${baseUrl}/invite/${room.value.id}`
+})
 
 // 生成所有玩家槽位（包括空槽位）
 const allPlayerSlots = computed(() => {
@@ -277,6 +307,37 @@ function sendMessage() {
   newMessage.value = ''
 }
 
+async function copyInviteLink() {
+  if (!inviteLink.value) return
+  
+  try {
+    await navigator.clipboard.writeText(inviteLink.value)
+    copySuccess.value = true
+    showSuccess('邀请链接已复制到剪贴板')
+    
+    // 3秒后重置复制状态
+    setTimeout(() => {
+      copySuccess.value = false
+    }, 3000)
+  } catch (error) {
+    // 如果剪贴板API不可用，使用传统方法
+    if (inviteLinkInput.value) {
+      inviteLinkInput.value.select()
+      inviteLinkInput.value.setSelectionRange(0, 99999) // 移动端兼容
+      try {
+        document.execCommand('copy')
+        copySuccess.value = true
+        showSuccess('邀请链接已复制到剪贴板')
+        setTimeout(() => {
+          copySuccess.value = false
+        }, 3000)
+      } catch (err) {
+        showSuccess('复制失败，请手动复制链接')
+      }
+    }
+  }
+}
+
 function getConnectionStatusText(): string {
   switch (connectionStatus.value) {
     case 'connected':
@@ -338,6 +399,35 @@ watch(() => room.value?.status, (newStatus, oldStatus) => {
   }
 })
 
+// 页面关闭时的清理函数
+const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+  // 使用 sendBeacon API 确保在页面关闭时能可靠地发送离开房间请求
+  if (currentRoom.value && currentPlayer.value) {
+    const url = `http://localhost:8080/api/rooms/${currentRoom.value.id}/leave`
+    const data = JSON.stringify({ playerId: currentPlayer.value.id })
+    
+    // 尝试使用 sendBeacon API（更可靠）
+    if (navigator.sendBeacon) {
+      const blob = new Blob([data], { type: 'application/json' })
+      navigator.sendBeacon(url, blob)
+    } else {
+      // 降级到同步 XMLHttpRequest（作为备选方案）
+      try {
+        const xhr = new XMLHttpRequest()
+        xhr.open('POST', url, false) // 同步请求
+        xhr.setRequestHeader('Content-Type', 'application/json')
+        xhr.send(data)
+      } catch (error) {
+        console.warn('页面关闭时离开房间失败:', error)
+      }
+    }
+    
+    // 立即断开WebSocket连接
+    const ws = getGlobalWebSocketService()
+    ws.disconnect()
+  }
+}
+
 // 生命周期
 onMounted(async () => {
   const roomId = route.params.id as string
@@ -369,10 +459,16 @@ onMounted(async () => {
     }
   }
   
+  // 监听页面关闭事件
+  window.addEventListener('beforeunload', handleBeforeUnload)
+  
   scrollChatToBottom()
 })
 
 onUnmounted(() => {
+  // 移除页面关闭事件监听器
+  window.removeEventListener('beforeunload', handleBeforeUnload)
+  
   // 清理工作在组件销毁时进行
 })
 </script>
@@ -421,6 +517,67 @@ onUnmounted(() => {
 .room-id {
   font-size: 1rem;
   opacity: 0.8;
+}
+
+.invite-section {
+  margin-top: 15px;
+}
+
+.invite-link-container {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+
+.invite-link-container {
+  flex: 1;
+  max-width: 400px;
+  padding: 8px 12px;
+  border: 1px solid rgba(255,255,255,0.3);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.1);
+  color: white;
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.invite-link-input::placeholder {
+  color: rgba(255,255,255,0.6);
+}
+
+.copy-button {
+  background: rgba(255,255,255,0.2);
+  color: white;
+  border: 1px solid rgba(255,255,255,0.3);
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.copy-button:hover:not(:disabled) {
+  background: rgba(255,255,255,0.3);
+  transform: translateY(-1px);
+}
+
+.copy-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.copy-button.copied {
+  background: rgba(40, 167, 69, 0.8);
+  border-color: rgba(40, 167, 69, 0.8);
+}
+
+.invite-hint {
+  font-size: 0.85rem;
+  opacity: 0.7;
+  margin: 0;
 }
 
 .connection-status {

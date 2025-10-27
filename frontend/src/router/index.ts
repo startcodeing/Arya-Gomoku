@@ -4,6 +4,7 @@ import RoomList from '../components/RoomList.vue'
 import RoomLobby from '../components/RoomLobby.vue'
 import PVPGame from '../components/PVPGame.vue'
 import GameResult from '../components/GameResult.vue'
+import InvitePage from '../components/InvitePage.vue'
 
 const routes = [
   {
@@ -32,6 +33,12 @@ const routes = [
     path: '/result/:id',
     name: 'GameResult',
     component: GameResult,
+    props: true
+  },
+  {
+    path: '/invite/:id',
+    name: 'InvitePage',
+    component: InvitePage,
     props: true
   }
 ]

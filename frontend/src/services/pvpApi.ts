@@ -34,6 +34,11 @@ export const pvpApi = {
     return data
   },
 
+  async getRoomInfo(roomId: string): Promise<RoomResponse> {
+    const { data } = await apiClient.get(`/rooms/${roomId}`)
+    return data
+  },
+
   async startGame(roomId: string): Promise<RoomResponse> {
     const { data } = await apiClient.post(`/rooms/${roomId}/start`)
     return data
