@@ -437,26 +437,46 @@ onMounted(async () => {
     return
   }
   
-  // 如果不在房间中，尝试获取房间信息
-  if (!room.value || room.value.id !== roomId) {
-    try {
-      loadingText.value = '加载房间信息...'
-      const roomData = await pvpStore.getRoom(roomId)
-      
-      // 检查当前玩家是否在房间中
-      const isPlayerInRoom = roomData.players.some(p => p.id === currentPlayer.value?.id)
-      
-      if (!isPlayerInRoom) {
-        // 如果玩家不在房间中，跳转到房间列表
-        router.push('/pvp')
-        return
-      }
-      
-    } catch (error) {
-      // 如果获取房间失败，跳转到房间列表
+  // 首先从localStorage初始化Pinia store数据
+  pvpStore.initializeFromLocalStorage()
+  
+  // 总是尝试重新获取房间信息，确保数据是最新的
+  try {
+    loadingText.value = '加载房间信息...'
+    const roomData = await pvpStore.getRoom(roomId)
+    
+    // 检查当前玩家是否在房间中
+    const isPlayerInRoom = roomData.players.some(p => p.id === currentPlayer.value?.id)
+    
+    if (!isPlayerInRoom) {
+      // 如果玩家不在房间中，跳转到房间列表
+      console.warn('当前玩家不在房间中，跳转到房间列表')
       router.push('/pvp')
       return
     }
+    
+    // 确保WebSocket连接正常
+    const ws = getGlobalWebSocketService()
+    
+    // 设置WebSocket事件处理器，确保连接状态正确更新到Pinia store
+    pvpStore.setupWebSocketEventHandlers(ws)
+    
+    if (!ws.isConnected() && currentPlayer.value) {
+      console.log('WebSocket未连接，尝试重新连接...')
+      try {
+        await ws.connect(roomId, currentPlayer.value.id)
+        console.log('WebSocket重连成功')
+      } catch (wsError) {
+        console.error('WebSocket连接失败:', wsError)
+        // WebSocket连接失败不阻止页面显示，但会影响实时更新
+      }
+    }
+    
+  } catch (error) {
+    console.error('获取房间信息失败:', error)
+    // 如果获取房间失败，跳转到房间列表
+    router.push('/pvp')
+    return
   }
   
   // 监听页面关闭事件

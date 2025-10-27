@@ -25,6 +25,75 @@ export const usePvpStore = defineStore('pvp', () => {
   const chatMessages = ref<ChatMessage[]>([])
   const connectionStatus = ref<ConnectionStatus>('disconnected')
 
+  // 从localStorage初始化数据
+  function initializeFromLocalStorage() {
+    try {
+      const pvpStoreData = JSON.parse(localStorage.getItem('pvp-store') || '{}')
+      const playerId = localStorage.getItem('player-id')
+      const playerName = localStorage.getItem('player-name')
+      
+      // 恢复currentPlayer
+      if (pvpStoreData.currentPlayer) {
+        currentPlayer.value = pvpStoreData.currentPlayer
+      } else if (playerId && playerName) {
+        currentPlayer.value = {
+          id: playerId,
+          name: playerName,
+          roomId: '',
+          playerNumber: 0,
+          isReady: false,
+          isOnline: true,
+          isCreator: false
+        }
+      }
+      
+      // 恢复currentRoom
+      if (pvpStoreData.currentRoom) {
+        currentRoom.value = pvpStoreData.currentRoom
+      }
+      
+      // 恢复connectionStatus
+      if (pvpStoreData.connectionStatus) {
+        connectionStatus.value = pvpStoreData.connectionStatus
+      }
+      
+      console.log('从localStorage初始化Pinia store完成:', {
+        currentPlayer: currentPlayer.value,
+        currentRoom: currentRoom.value ? { id: currentRoom.value.id, name: currentRoom.value.name } : null,
+        connectionStatus: connectionStatus.value
+      })
+    } catch (error) {
+      console.error('从localStorage初始化失败:', error)
+    }
+  }
+
+  // 保存数据到localStorage
+  function saveToLocalStorage() {
+    try {
+      // 保存基本的player信息
+      if (currentPlayer.value) {
+        localStorage.setItem('player-id', currentPlayer.value.id)
+        localStorage.setItem('player-name', currentPlayer.value.name)
+      }
+      
+      // 保存完整的store数据
+      const storeData = {
+        currentPlayer: currentPlayer.value,
+        currentRoom: currentRoom.value,
+        connectionStatus: connectionStatus.value
+      }
+      localStorage.setItem('pvp-store', JSON.stringify(storeData))
+      
+      console.log('数据已保存到localStorage:', {
+        playerId: currentPlayer.value?.id,
+        playerName: currentPlayer.value?.name,
+        roomId: currentRoom.value?.id
+      })
+    } catch (error) {
+      console.error('保存到localStorage失败:', error)
+    }
+  }
+
   async function fetchRooms() {
     isLoading.value = true
     error.value = null
@@ -58,6 +127,9 @@ export const usePvpStore = defineStore('pvp', () => {
       // 设置WebSocket事件监听器
       setupWebSocketEventHandlers(ws)
       
+      // 保存到localStorage
+      saveToLocalStorage()
+      
       // 不阻塞创建流程：WebSocket连接失败也不影响导航
       ws.connect(room.id, player.id).catch((err) => {
         console.warn('WebSocket连接失败，将在房间内重试', err)
@@ -81,6 +153,9 @@ export const usePvpStore = defineStore('pvp', () => {
       
       // 设置WebSocket事件监听器
       setupWebSocketEventHandlers(ws)
+      
+      // 保存到localStorage
+      saveToLocalStorage()
       
       // 不阻塞加入流程：WebSocket连接失败也不影响导航
       ws.connect(resp.room.id, resp.player.id).catch((err) => {
@@ -162,6 +237,12 @@ export const usePvpStore = defineStore('pvp', () => {
     
     const newReadyState = !currentPlayer.value.isReady
     console.log('发送准备状态变更:', { ready: newReadyState })
+    
+    // 立即更新本地状态
+    currentPlayer.value.isReady = newReadyState
+    
+    // 保存到localStorage
+    saveToLocalStorage()
     
     // 通过WebSocket发送准备状态变更
     const ws = getGlobalWebSocketService()
@@ -258,47 +339,82 @@ export const usePvpStore = defineStore('pvp', () => {
   // WebSocket事件处理
   function handleWebSocketMessage(message: any) {
     console.log('收到WebSocket消息:', message.type, message.data)
-    switch (message.type) {
-      case 'room_updated':
-        console.log('处理房间更新消息:', message.data)
-        if (message.data.room) {
-          currentRoom.value = message.data.room
-          console.log('房间状态已更新:', currentRoom.value)
-        }
-        break
-      case 'game_start':
-        if (message.data.game) {
-          currentGame.value = message.data.game
-          if (currentRoom.value) {
-            currentRoom.value.status = 'playing'
+    
+    try {
+      switch (message.type) {
+        case 'room_updated':
+          console.log('处理房间更新消息:', message.data)
+          if (message.data?.room) {
+            // 验证房间ID是否匹配
+            if (currentRoom.value && message.data.room.id !== currentRoom.value.id) {
+              console.warn('收到不匹配的房间更新消息，忽略')
+              break
+            }
+            currentRoom.value = message.data.room
+            
+            // 同步更新当前玩家状态
+            if (currentPlayer.value) {
+              const updatedPlayer = message.data.room.players.find((p: Player) => p.id === currentPlayer.value!.id)
+              if (updatedPlayer) {
+                console.log('同步更新当前玩家状态:', {
+                  before: { isReady: currentPlayer.value.isReady },
+                  after: { isReady: updatedPlayer.isReady }
+                })
+                currentPlayer.value = updatedPlayer
+                // 保存更新后的状态到localStorage
+                saveToLocalStorage()
+              }
+            }
+            
+            console.log('房间状态已更新:', currentRoom.value)
           }
-        }
-        break
-      case 'game_update':
-        if (message.data.game) {
-          currentGame.value = message.data.game
-        }
-        break
-      case 'chat_message':
-        if (message.data) {
-          chatMessages.value.push({
-            id: Date.now().toString(),
-            playerId: message.data.playerId,
-            playerName: message.data.playerName,
-            message: message.data.message,
-            timestamp: message.data.timestamp
-          })
-        }
-        break
-      case 'player_joined':
-      case 'player_left':
-        if (message.data.room) {
-          currentRoom.value = message.data.room
-        }
-        break
-      case 'error':
-        error.value = message.data.message || '发生未知错误'
-        break
+          break
+        case 'game_start':
+          if (message.data?.game) {
+            currentGame.value = message.data.game
+            if (currentRoom.value) {
+              currentRoom.value.status = 'playing'
+            }
+          }
+          break
+        case 'game_update':
+          if (message.data?.game) {
+            currentGame.value = message.data.game
+          }
+          break
+        case 'chat_message':
+          if (message.data) {
+            chatMessages.value.push({
+              id: Date.now().toString(),
+              playerId: message.data.playerId,
+              playerName: message.data.playerName,
+              message: message.data.message,
+              timestamp: message.data.timestamp
+            })
+          }
+          break
+        case 'player_joined':
+        case 'player_left':
+          if (message.data?.room) {
+            // 验证房间ID是否匹配
+            if (currentRoom.value && message.data.room.id !== currentRoom.value.id) {
+              console.warn('收到不匹配的房间更新消息，忽略')
+              break
+            }
+            currentRoom.value = message.data.room
+            console.log('玩家状态更新:', message.type, currentRoom.value.players)
+          }
+          break
+        case 'error':
+          const errorMsg = message.data?.message || '发生未知错误'
+          error.value = errorMsg
+          console.error('WebSocket错误消息:', errorMsg)
+          break
+        default:
+          console.warn('未知的WebSocket消息类型:', message.type)
+      }
+    } catch (err) {
+      console.error('处理WebSocket消息时发生错误:', err, message)
     }
   }
 
@@ -356,6 +472,8 @@ export const usePvpStore = defineStore('pvp', () => {
     isMyTurn,
     
     // 方法
+    initializeFromLocalStorage,
+    saveToLocalStorage,
     fetchRooms,
     createRoom,
     joinRoom,

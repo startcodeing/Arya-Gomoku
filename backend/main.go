@@ -18,7 +18,14 @@ func main() {
 
 	// Configure CORS middleware
 	config := cors.DefaultConfig()
-	config.AllowOrigins = []string{"http://localhost:5173", "http://192.168.110.136:5173"}
+	config.AllowOrigins = []string{
+		"http://localhost:5173",
+		"http://0.0.0.0:5173",
+		"http://localhost:5174",
+		"http://0.0.0.0:5174",
+		"http://192.168.0.107:5173",
+		"http://192.168.0.107:5174",
+	}
 	config.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
 	config.AllowHeaders = []string{"Origin", "Content-Type", "Accept", "Authorization"}
 	r.Use(cors.New(config))
@@ -49,9 +56,9 @@ func main() {
 		api.GET("/ws", gameController.HandleWebSocket)
 	}
 
-	// Start server on port 8080
-	log.Println("Starting Gomoku backend server on :8080")
-	if err := http.ListenAndServe(":8080", r); err != nil {
+	// Start server on port 8080, bind to all interfaces for LAN access
+	log.Println("Starting Gomoku backend server on 0.0.0.0:8080")
+	if err := http.ListenAndServe("0.0.0.0:8080", r); err != nil {
 		log.Fatal("Failed to start server:", err)
 	}
 }

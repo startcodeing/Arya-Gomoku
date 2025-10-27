@@ -92,7 +92,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { usePvpStore } from '../stores/pvp'
 import { pvpApi } from '../services/pvpApi'
@@ -181,9 +181,54 @@ function getStatusText(status: string): string {
   }
 }
 
+// 轮询相关
+let pollInterval: number | null = null
+
+// 定期轮询房间状态
+function startPolling() {
+  if (pollInterval) return
+  
+  pollInterval = window.setInterval(async () => {
+    if (!roomId.value || isJoining.value) return
+    
+    try {
+      const response = await pvpApi.getRoomInfo(roomId.value)
+      if (response.room) {
+        const oldPlayerCount = roomInfo.value?.players.length || 0
+        const newPlayerCount = response.room.players.length
+        
+        roomInfo.value = response.room
+        
+        // 如果玩家数量发生变化，输出日志
+        if (oldPlayerCount !== newPlayerCount) {
+          console.log(`房间状态已更新: 玩家数量从 ${oldPlayerCount} 变为 ${newPlayerCount}`)
+        }
+      }
+    } catch (err) {
+      console.error('轮询房间状态失败:', err)
+    }
+  }, 2000) // 每2秒轮询一次
+}
+
+// 停止轮询
+function stopPolling() {
+  if (pollInterval) {
+    clearInterval(pollInterval)
+    pollInterval = null
+  }
+}
+
 // 生命周期
-onMounted(() => {
-  loadRoomInfo()
+onMounted(async () => {
+  await loadRoomInfo()
+  // 加载完房间信息后开始轮询
+  if (roomInfo.value) {
+    startPolling()
+  }
+})
+
+onUnmounted(() => {
+  stopPolling()
 })
 </script>
 

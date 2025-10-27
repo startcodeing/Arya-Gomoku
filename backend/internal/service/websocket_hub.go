@@ -83,6 +83,20 @@ func (h *Hub) Run() {
 	}
 }
 
+// handlePingMessage handles ping messages for keeping connection alive
+func (c *Client) handlePingMessage(wsMessage *model.WSMessage) {
+	// Respond with pong message
+	pongMessage := model.WSMessage{
+		Type: "pong",
+		Data: map[string]interface{}{
+			"timestamp": wsMessage.Data,
+		},
+	}
+	
+	// Send pong response to the client
+	c.Hub.sendToClient(c, pongMessage)
+}
+
 // registerClient registers a new client
 func (h *Hub) registerClient(client *Client) {
 	h.mutex.Lock()
@@ -97,22 +111,27 @@ func (h *Hub) registerClient(client *Client) {
 		}
 		h.rooms[client.RoomID][client] = true
 		
-		// Send current room state to the newly connected client
+		// Get current room state
 		room := h.gameService.GetRoom(client.RoomID)
 		if room != nil {
+			log.Printf("客户端注册成功，广播房间状态: roomID=%s, playerID=%s, 房间玩家数=%d", 
+				client.RoomID, client.ID, len(room.Players))
+			
+			// Broadcast updated room state to ALL clients in the room
 			updateData := model.RoomUpdateData{
 				Room:   room,
 				Player: client.Player,
 			}
 			
-			// Send room state to the new client
 			message := model.WSMessage{
 				Type: "room_updated",
 				Data: updateData,
 			}
 			
-			// Send directly to this client
-			h.sendToClient(client, message)
+			// Broadcast to all clients in the room (including the new one)
+			log.Printf("registerClient: 准备调用broadcastToRoomInternal - 房间ID: %s", client.RoomID)
+			h.broadcastToRoomInternal(client.RoomID, message)
+			log.Printf("registerClient: broadcastToRoomInternal调用完成 - 房间ID: %s", client.RoomID)
 			
 			// Also send current game state if game is in progress
 			if room.Status == "playing" && room.Game != nil {
@@ -122,12 +141,29 @@ func (h *Hub) registerClient(client *Client) {
 						Game: room.Game,
 					},
 				}
-				h.sendToClient(client, gameMessage)
+				h.broadcastToRoomInternal(client.RoomID, gameMessage)
+			}
+			
+			// Send player joined notification to other clients
+			joinedMessage := model.WSMessage{
+				Type: "player_joined",
+				Data: map[string]interface{}{
+					"player": client.Player,
+					"room":   room,
+				},
+			}
+			
+			// Send to all clients in room except the newly joined one
+			for roomClient := range h.rooms[client.RoomID] {
+				if roomClient.ID != client.ID {
+					h.sendToClient(roomClient, joinedMessage)
+				}
 			}
 		}
 	}
 
-	log.Printf("Client %s registered for room %s", client.ID, client.RoomID)
+	log.Printf("Client %s registered for room %s, total clients in room: %d", 
+		client.ID, client.RoomID, len(h.rooms[client.RoomID]))
 }
 
 // unregisterClient unregisters a client
@@ -136,14 +172,21 @@ func (h *Hub) unregisterClient(client *Client) {
 	defer h.mutex.Unlock()
 
 	if _, ok := h.clients[client]; ok {
+		log.Printf("客户端断开连接: roomID=%s, playerID=%s", client.RoomID, client.ID)
+		
 		delete(h.clients, client)
 		close(client.Send)
 
 		// Remove from room
 		if client.RoomID != "" && h.rooms[client.RoomID] != nil {
 			delete(h.rooms[client.RoomID], client)
-			if len(h.rooms[client.RoomID]) == 0 {
+			remainingClients := len(h.rooms[client.RoomID])
+			
+			if remainingClients == 0 {
 				delete(h.rooms, client.RoomID)
+				log.Printf("房间 %s 已清空，删除房间", client.RoomID)
+			} else {
+				log.Printf("房间 %s 剩余客户端数: %d", client.RoomID, remainingClients)
 			}
 		}
 
@@ -151,17 +194,32 @@ func (h *Hub) unregisterClient(client *Client) {
 		if client.Player != nil {
 			h.gameService.HandlePlayerDisconnect(client.RoomID, client.Player.ID)
 			
-			// Broadcast room update to remaining clients after player disconnect
+			// Get updated room state after player disconnect
 			room := h.gameService.GetRoom(client.RoomID)
 			if room != nil {
+				log.Printf("广播玩家离开事件: roomID=%s, playerID=%s, 房间剩余玩家数=%d", 
+					client.RoomID, client.ID, len(room.Players))
+				
+				// Broadcast player left notification
+				leftMessage := model.WSMessage{
+					Type: "player_left",
+					Data: map[string]interface{}{
+						"player": client.Player,
+						"room":   room,
+					},
+				}
+				h.broadcastToRoomInternal(client.RoomID, leftMessage)
+				
+				// Also broadcast updated room state
 				updateData := model.RoomUpdateData{
 					Room:   room,
 					Player: client.Player,
 				}
-				h.BroadcastToRoom(client.RoomID, model.WSMessage{
-					Type: "player_left",
+				roomUpdateMessage := model.WSMessage{
+					Type: "room_updated",
 					Data: updateData,
-				})
+				}
+				h.broadcastToRoomInternal(client.RoomID, roomUpdateMessage)
 			}
 		}
 
@@ -188,7 +246,12 @@ func (h *Hub) broadcastMessage(message []byte) {
 func (h *Hub) BroadcastToRoom(roomID string, message interface{}) {
 	h.mutex.RLock()
 	defer h.mutex.RUnlock()
+	h.broadcastToRoomInternal(roomID, message)
+}
 
+// broadcastToRoomInternal broadcasts a message to all clients in a specific room
+// This method assumes the caller already holds the appropriate lock
+func (h *Hub) broadcastToRoomInternal(roomID string, message interface{}) {
 	log.Printf("开始广播消息到房间 %s", roomID)
 	messageBytes, err := json.Marshal(message)
 	if err != nil {
@@ -253,6 +316,8 @@ func (h *Hub) GetRoomClients(roomID string) int {
 
 // ServeWS handles websocket requests from the peer
 func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request, roomID, playerID string) {
+	log.Printf("WebSocket连接请求: roomID=%s, playerID=%s", roomID, playerID)
+	
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade error: %v", err)
@@ -262,15 +327,41 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request, roomID, playerID s
 	// Get player information
 	room := h.gameService.GetRoom(roomID)
 	if room == nil {
+		log.Printf("WebSocket连接失败: 房间不存在 roomID=%s", roomID)
+		// Send error message before closing
+		errorMsg := model.WSMessage{
+			Type: "error",
+			Data: map[string]interface{}{
+				"message": "房间不存在或已关闭",
+				"code":    "ROOM_NOT_FOUND",
+			},
+		}
+		if msgBytes, err := json.Marshal(errorMsg); err == nil {
+			conn.WriteMessage(websocket.TextMessage, msgBytes)
+		}
 		conn.Close()
 		return
 	}
 
 	player := room.GetPlayer(playerID)
 	if player == nil {
+		log.Printf("WebSocket连接失败: 玩家不在房间中 roomID=%s, playerID=%s", roomID, playerID)
+		// Send error message before closing
+		errorMsg := model.WSMessage{
+			Type: "error",
+			Data: map[string]interface{}{
+				"message": "玩家不在此房间中",
+				"code":    "PLAYER_NOT_IN_ROOM",
+			},
+		}
+		if msgBytes, err := json.Marshal(errorMsg); err == nil {
+			conn.WriteMessage(websocket.TextMessage, msgBytes)
+		}
 		conn.Close()
 		return
 	}
+
+	log.Printf("WebSocket连接成功: roomID=%s, playerID=%s, playerName=%s", roomID, playerID, player.Name)
 
 	client := &Client{
 		ID:     playerID,
@@ -292,10 +383,12 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request, roomID, playerID s
 // readPump pumps messages from the websocket connection to the hub
 func (c *Client) readPump() {
 	defer func() {
+		log.Printf("readPump结束 - 玩家: %s, 房间: %s", c.Player.Name, c.RoomID)
 		c.Hub.unregister <- c
 		c.Conn.Close()
 	}()
 
+	log.Printf("readPump开始 - 玩家: %s, 房间: %s", c.Player.Name, c.RoomID)
 	c.Conn.SetReadLimit(512)
 	c.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	c.Conn.SetPongHandler(func(string) error {
@@ -304,13 +397,17 @@ func (c *Client) readPump() {
 	})
 
 	for {
+		log.Printf("等待读取消息 - 玩家: %s", c.Player.Name)
 		_, messageBytes, err := c.Conn.ReadMessage()
 		if err != nil {
+			log.Printf("读取消息错误 - 玩家: %s, 错误: %v", c.Player.Name, err)
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Printf("WebSocket error: %v", err)
 			}
 			break
 		}
+
+		log.Printf("收到原始消息 - 玩家: %s, 长度: %d, 内容: %s", c.Player.Name, len(messageBytes), string(messageBytes))
 
 		var wsMessage model.WSMessage
 		if err := json.Unmarshal(messageBytes, &wsMessage); err != nil {
@@ -333,17 +430,21 @@ func (c *Client) writePump() {
 	for {
 		select {
 		case message, ok := <-c.Send:
+			log.Printf("writePump: 准备发送消息给客户端 %s, 消息长度: %d", c.ID, len(message))
 			c.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if !ok {
+				log.Printf("writePump: 发送通道已关闭，客户端 %s", c.ID)
 				c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 
 			w, err := c.Conn.NextWriter(websocket.TextMessage)
 			if err != nil {
+				log.Printf("writePump: NextWriter错误，客户端 %s: %v", c.ID, err)
 				return
 			}
 			w.Write(message)
+			log.Printf("writePump: 消息内容已写入，客户端 %s: %s", c.ID, string(message))
 
 			// Add queued messages to the current message
 			n := len(c.Send)
@@ -353,8 +454,10 @@ func (c *Client) writePump() {
 			}
 
 			if err := w.Close(); err != nil {
+				log.Printf("writePump: Close错误，客户端 %s: %v", c.ID, err)
 				return
 			}
+			log.Printf("writePump: 消息发送完成，客户端 %s", c.ID)
 
 		case <-ticker.C:
 			c.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
@@ -367,6 +470,8 @@ func (c *Client) writePump() {
 
 // handleMessage handles incoming WebSocket messages
 func (c *Client) handleMessage(wsMessage *model.WSMessage) {
+	log.Printf("收到WebSocket消息 - 类型: %s, 玩家: %s, 房间: %s", wsMessage.Type, c.Player.Name, c.RoomID)
+	
 	switch wsMessage.Type {
 	case "join":
 		c.handleJoinMessage(wsMessage)
@@ -378,6 +483,8 @@ func (c *Client) handleMessage(wsMessage *model.WSMessage) {
 		c.handleChatMessage(wsMessage)
 	case "ready":
 		c.handleReadyMessage(wsMessage)
+	case "ping":
+		c.handlePingMessage(wsMessage)
 	default:
 		log.Printf("Unknown message type: %s", wsMessage.Type)
 	}
@@ -509,10 +616,12 @@ func (c *Client) handleReadyMessage(wsMessage *model.WSMessage) {
 			Player: c.Player,
 		}
 		log.Printf("广播房间更新消息到房间 %s", c.RoomID)
+		log.Printf("调用BroadcastToRoom前 - 房间ID: %s", c.RoomID)
 		c.Hub.BroadcastToRoom(c.RoomID, model.WSMessage{
 			Type: "room_updated",
 			Data: updateData,
 		})
+		log.Printf("调用BroadcastToRoom后 - 房间ID: %s", c.RoomID)
 		log.Printf("房间更新消息广播完成")
 
 		// Check if game can start

@@ -89,18 +89,21 @@ func (gc *GameController) JoinRoom(c *gin.Context) {
 		return
 	}
 	
-	// Broadcast room update to all clients in the room
-	gc.hub.BroadcastToRoom(roomID, model.WSMessage{
-		Type: "room_update",
-		Data: model.RoomUpdateData{
-			Room: room,
-		},
-	})
-	
+	// First respond to the HTTP request
 	c.JSON(http.StatusOK, gin.H{
 		"room":   room,
 		"player": player,
 	})
+	
+	// Then broadcast room update to all clients in the room (async to avoid deadlock)
+	go func() {
+		gc.hub.BroadcastToRoom(roomID, model.WSMessage{
+			Type: "room_update",
+			Data: model.RoomUpdateData{
+				Room: room,
+			},
+		})
+	}()
 }
 
 // GetRoom handles GET /api/rooms/:id requests

@@ -20,7 +20,8 @@ export class WebSocketService {
   // WebSocket URL - adjust according to your backend configuration
   private getWebSocketUrl(): string {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const host = import.meta.env.VITE_WS_HOST || window.location.host
+    // Use backend port 8080 instead of frontend port
+    const host = import.meta.env.VITE_WS_HOST || 'localhost:8080'
     return `${protocol}//${host}/api/ws`
   }
 
@@ -98,6 +99,21 @@ export class WebSocketService {
         this.ws.onmessage = (event) => {
           try {
             const message: WebSocketMessage = JSON.parse(event.data)
+            
+            // Handle server error messages
+            if (message.type === 'error') {
+              console.error('服务器错误:', message.data)
+              
+              // If it's a connection-related error, trigger error callback
+              if (message.data?.code === 'ROOM_NOT_FOUND' || message.data?.code === 'PLAYER_NOT_IN_ROOM') {
+                if (this.onError) {
+                  this.onError(new Event('server-error'))
+                }
+                // Don't attempt to reconnect for these errors
+                this.isManualClose = true
+                return
+              }
+            }
             
             if (this.onMessage) {
               this.onMessage(message)
