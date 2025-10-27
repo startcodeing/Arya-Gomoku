@@ -196,7 +196,7 @@ export const usePvpStore = defineStore('pvp', () => {
     }
 
     ws.send({
-      type: 'chat_message',
+      type: 'chat',
       data: {
         roomId: currentRoom.value.id,
         playerId: currentPlayer.value.id,
