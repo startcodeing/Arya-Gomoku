@@ -470,24 +470,30 @@ func (c *Client) writePump() {
 
 // handleMessage handles incoming WebSocket messages
 func (c *Client) handleMessage(wsMessage *model.WSMessage) {
-	log.Printf("收到WebSocket消息 - 类型: %s, 玩家: %s, 房间: %s", wsMessage.Type, c.Player.Name, c.RoomID)
-	
-	switch wsMessage.Type {
-	case "join":
-		c.handleJoinMessage(wsMessage)
-	case "leave":
-		c.handleLeaveMessage(wsMessage)
-	case "move":
-		c.handleMoveMessage(wsMessage)
-	case "chat":
-		c.handleChatMessage(wsMessage)
-	case "ready":
-		c.handleReadyMessage(wsMessage)
-	case "ping":
-		c.handlePingMessage(wsMessage)
-	default:
-		log.Printf("Unknown message type: %s", wsMessage.Type)
-	}
+    log.Printf("收到WebSocket消息 - 类型: %s, 玩家: %s, 房间: %s", wsMessage.Type, c.Player.Name, c.RoomID)
+    
+    switch wsMessage.Type {
+    case "join":
+        c.handleJoinMessage(wsMessage)
+    case "leave":
+        c.handleLeaveMessage(wsMessage)
+    case "move":
+        c.handleMoveMessage(wsMessage)
+    case "chat":
+        c.handleChatMessage(wsMessage)
+    case "ready":
+        c.handleReadyMessage(wsMessage)
+    case "ping":
+        c.handlePingMessage(wsMessage)
+    case "draw_offer":
+        c.handleDrawOfferMessage(wsMessage)
+    case "draw_response":
+        c.handleDrawResponseMessage(wsMessage)
+    case "resign":
+        c.handleResignMessage(wsMessage)
+    default:
+        log.Printf("Unknown message type: %s", wsMessage.Type)
+    }
 }
 
 // handleJoinMessage handles player join messages
@@ -645,4 +651,132 @@ func (c *Client) handleReadyMessage(wsMessage *model.WSMessage) {
 			}
 		}
 	}
+}
+
+// handleDrawOfferMessage handles a player's draw offer
+func (c *Client) handleDrawOfferMessage(wsMessage *model.WSMessage) {
+    log.Printf("收到求和请求 - 玩家: %s, 房间: %s", c.Player.Name, c.RoomID)
+
+    // 仅在游戏进行中允许求和
+    room := c.Hub.gameService.GetRoom(c.RoomID)
+    if room == nil || room.Game == nil || room.Game.Status != "playing" {
+        log.Printf("求和请求被拒绝：游戏未进行中")
+        // 返回错误给发起者
+        c.Hub.sendToClient(c, model.WSMessage{
+            Type: "error",
+            Data: map[string]interface{}{
+                "message": "当前无法求和",
+                "code":    "DRAW_NOT_ALLOWED",
+            },
+        })
+        return
+    }
+
+    // 广播求和请求给房间内其他玩家
+    c.Hub.BroadcastToRoom(c.RoomID, model.WSMessage{
+        Type: "draw_offer",
+        Data: map[string]interface{}{
+            "fromPlayerId":   c.Player.ID,
+            "fromPlayerName": c.Player.Name,
+            "timestamp":      time.Now(),
+        },
+    })
+}
+
+// handleDrawResponseMessage handles draw accept/reject from the other player
+func (c *Client) handleDrawResponseMessage(wsMessage *model.WSMessage) {
+    log.Printf("收到求和回应 - 玩家: %s, 房间: %s", c.Player.Name, c.RoomID)
+
+    data, ok := wsMessage.Data.(map[string]interface{})
+    if !ok {
+        return
+    }
+
+    accept, ok := data["accept"].(bool)
+    if !ok {
+        return
+    }
+
+    room := c.Hub.gameService.GetRoom(c.RoomID)
+    if room == nil || room.Game == nil || room.Game.Status != "playing" {
+        log.Printf("求和回应忽略：游戏未进行中")
+        return
+    }
+
+    if accept {
+        // 标记为平局结束
+        room.Game.Status = "finished"
+        room.Game.Winner = "" // 无胜者表示平局
+        now := time.Now()
+        room.Game.EndedAt = &now
+
+        // 广播游戏结束（平局）
+        updateData := model.GameUpdateData{
+            Game: room.Game,
+        }
+        c.Hub.BroadcastToRoom(c.RoomID, model.WSMessage{
+            Type: "game_ended",
+            Data: updateData,
+        })
+
+        // 额外广播求和已接受事件，便于前端提示
+        c.Hub.BroadcastToRoom(c.RoomID, model.WSMessage{
+            Type: "draw_accepted",
+            Data: map[string]interface{}{
+                "byPlayerId":   c.Player.ID,
+                "byPlayerName": c.Player.Name,
+                "timestamp":    time.Now(),
+            },
+        })
+    } else {
+        // 广播求和被拒绝
+        c.Hub.BroadcastToRoom(c.RoomID, model.WSMessage{
+            Type: "draw_rejected",
+            Data: map[string]interface{}{
+                "byPlayerId":   c.Player.ID,
+                "byPlayerName": c.Player.Name,
+                "timestamp":    time.Now(),
+            },
+        })
+    }
+}
+
+// handleResignMessage handles resign action from a player
+func (c *Client) handleResignMessage(wsMessage *model.WSMessage) {
+    log.Printf("收到认输请求 - 玩家: %s, 房间: %s", c.Player.Name, c.RoomID)
+
+    room := c.Hub.gameService.GetRoom(c.RoomID)
+    if room == nil || room.Game == nil || room.Game.Status != "playing" {
+        log.Printf("认输请求忽略：游戏未进行中")
+        return
+    }
+
+    // 设置另一位玩家为胜者
+    var winnerID string
+    for _, p := range room.Players {
+        if p.ID != c.Player.ID {
+            winnerID = p.ID
+            break
+        }
+    }
+    room.Game.Status = "finished"
+    room.Game.Winner = winnerID
+    now := time.Now()
+    room.Game.EndedAt = &now
+
+    updateData := model.GameUpdateData{Game: room.Game}
+    c.Hub.BroadcastToRoom(c.RoomID, model.WSMessage{
+        Type: "game_ended",
+        Data: updateData,
+    })
+
+    // 额外广播认输事件，便于前端提示
+    c.Hub.BroadcastToRoom(c.RoomID, model.WSMessage{
+        Type: "resigned",
+        Data: map[string]interface{}{
+            "playerId":   c.Player.ID,
+            "playerName": c.Player.Name,
+            "timestamp":  time.Now(),
+        },
+    })
 }

@@ -66,7 +66,7 @@ export interface JoinRoomResponse {
 }
 
 export interface WebSocketMessage {
-  type: 'room_update' | 'game_start' | 'game_update' | 'game_end' | 'player_joined' | 'player_left' | 'chat_message' | 'error'
+  type: 'room_updated' | 'game_started' | 'game_update' | 'move_made' | 'game_ended' | 'player_joined' | 'player_left' | 'chat_message' | 'draw_offer' | 'draw_accepted' | 'draw_rejected' | 'resigned' | 'error'
   data: any
   timestamp: string
 }
@@ -189,13 +189,18 @@ export type GameStatus = typeof GAME_STATUS[keyof typeof GAME_STATUS]
 
 // WebSocket Message Types
 export const WS_MESSAGE_TYPES = {
-  ROOM_UPDATE: 'room_update',
-  GAME_START: 'game_start',
+  ROOM_UPDATED: 'room_updated',
+  GAME_STARTED: 'game_started',
   GAME_UPDATE: 'game_update',
-  GAME_END: 'game_end',
+  MOVE_MADE: 'move_made',
+  GAME_ENDED: 'game_ended',
   PLAYER_JOINED: 'player_joined',
   PLAYER_LEFT: 'player_left',
   CHAT_MESSAGE: 'chat_message',
+  DRAW_OFFER: 'draw_offer',
+  DRAW_ACCEPTED: 'draw_accepted',
+  DRAW_REJECTED: 'draw_rejected',
+  RESIGNED: 'resigned',
   ERROR: 'error'
 } as const
 

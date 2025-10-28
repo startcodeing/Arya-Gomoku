@@ -29,6 +29,14 @@ export class WebSocketService {
   async connect(roomId: string, playerId: string): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
+        // Guard: avoid creating a new connection if one is already
+        // OPEN or in CONNECTING state. This prevents duplicate WebSocket
+        // connections that lead to duplicated messages.
+        if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
+          console.log('WebSocket已在连接或已连接，跳过重复连接')
+          resolve()
+          return
+        }
         this.isManualClose = false
         const url = `${this.getWebSocketUrl()}?roomId=${roomId}&playerId=${playerId}`
         
@@ -97,29 +105,34 @@ export class WebSocketService {
         }
 
         this.ws.onmessage = (event) => {
-          try {
-            const message: WebSocketMessage = JSON.parse(event.data)
-            
-            // Handle server error messages
-            if (message.type === 'error') {
-              console.error('服务器错误:', message.data)
-              
-              // If it's a connection-related error, trigger error callback
-              if (message.data?.code === 'ROOM_NOT_FOUND' || message.data?.code === 'PLAYER_NOT_IN_ROOM') {
-                if (this.onError) {
-                  this.onError(new Event('server-error'))
+          const raw = typeof event.data === 'string' ? event.data : String(event.data)
+          const segments = raw.split(/\n+/).filter((s) => s.trim().length > 0)
+
+          for (const segment of segments) {
+            try {
+              const message: WebSocketMessage = JSON.parse(segment)
+
+              // Handle server error messages
+              if (message.type === 'error') {
+                console.error('服务器错误:', message.data)
+
+                // If it's a connection-related error, trigger error callback
+                if (message.data?.code === 'ROOM_NOT_FOUND' || message.data?.code === 'PLAYER_NOT_IN_ROOM') {
+                  if (this.onError) {
+                    this.onError(new Event('server-error'))
+                  }
+                  // Don't attempt to reconnect for these errors
+                  this.isManualClose = true
+                  continue
                 }
-                // Don't attempt to reconnect for these errors
-                this.isManualClose = true
-                return
               }
+
+              if (this.onMessage) {
+                this.onMessage(message)
+              }
+            } catch (error) {
+              console.error('解析WebSocket消息失败:', error, segment)
             }
-            
-            if (this.onMessage) {
-              this.onMessage(message)
-            }
-          } catch (error) {
-            console.error('解析WebSocket消息失败:', error, event.data)
           }
         }
 

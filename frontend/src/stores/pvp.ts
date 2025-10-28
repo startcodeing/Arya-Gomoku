@@ -24,6 +24,8 @@ export const usePvpStore = defineStore('pvp', () => {
   const error = ref<string | null>(null)
   const chatMessages = ref<ChatMessage[]>([])
   const connectionStatus = ref<ConnectionStatus>('disconnected')
+  // 求和请求（对方发起时在此记录，以便组件弹窗）
+  const drawOffer = ref<{ fromPlayerId: string; fromPlayerName: string; timestamp: string } | null>(null)
 
   // 从localStorage初始化数据
   function initializeFromLocalStorage() {
@@ -293,6 +295,52 @@ export const usePvpStore = defineStore('pvp', () => {
     })
   }
 
+  // 求和：向对手发起
+  function requestDraw() {
+    if (!currentRoom.value || !currentPlayer.value) return
+    const ws = getGlobalWebSocketService()
+    if (!ws.isConnected()) {
+      console.warn('WebSocket未连接，无法求和')
+      return
+    }
+    ws.send({
+      type: 'draw_offer',
+      data: {
+        roomId: currentRoom.value.id,
+        fromPlayerId: currentPlayer.value.id,
+      }
+    })
+  }
+
+  // 求和回应：接受
+  function acceptDraw() {
+    const ws = getGlobalWebSocketService()
+    if (!ws.isConnected()) return
+    ws.send({
+      type: 'draw_response',
+      data: { accept: true }
+    })
+    drawOffer.value = null
+  }
+
+  // 求和回应：拒绝
+  function rejectDraw() {
+    const ws = getGlobalWebSocketService()
+    if (!ws.isConnected()) return
+    ws.send({
+      type: 'draw_response',
+      data: { accept: false }
+    })
+    drawOffer.value = null
+  }
+
+  // 认输
+  function resign() {
+    const ws = getGlobalWebSocketService()
+    if (!ws.isConnected()) return
+    ws.send({ type: 'resign', data: {} })
+  }
+
   // 进行移动
   async function makeMove(x: number, y: number) {
     if (!currentRoom.value || !currentPlayer.value) {
@@ -369,7 +417,7 @@ export const usePvpStore = defineStore('pvp', () => {
             console.log('房间状态已更新:', currentRoom.value)
           }
           break
-        case 'game_start':
+        case 'game_started':
           if (message.data?.game) {
             currentGame.value = message.data.game
             if (currentRoom.value) {
@@ -382,6 +430,20 @@ export const usePvpStore = defineStore('pvp', () => {
             currentGame.value = message.data.game
           }
           break
+        case 'move_made':
+          if (message.data?.game) {
+            currentGame.value = message.data.game
+          }
+          // 可选：追加到历史
+          break
+        case 'game_ended':
+          if (message.data?.game) {
+            currentGame.value = message.data.game
+            if (currentRoom.value) {
+              currentRoom.value.status = 'finished'
+            }
+          }
+          break
         case 'chat_message':
           if (message.data) {
             chatMessages.value.push({
@@ -391,6 +453,64 @@ export const usePvpStore = defineStore('pvp', () => {
               message: message.data.message,
               timestamp: message.data.timestamp
             })
+          }
+          break
+        case 'draw_offer':
+          if (message.data) {
+            // 仅当对手发起时才显示求和弹窗；自己发起求和不弹窗
+            const fromId = message.data.fromPlayerId
+            if (currentPlayer.value && fromId === currentPlayer.value.id) {
+              // 自己发起的求和请求，忽略该提示
+              break
+            }
+            drawOffer.value = {
+              fromPlayerId: message.data.fromPlayerId,
+              fromPlayerName: message.data.fromPlayerName,
+              timestamp: message.data.timestamp
+            }
+          }
+          break
+        case 'draw_accepted':
+          // 回退逻辑：若未收到 game_ended，也将本地状态置为 finished（平局）
+          try {
+            if (currentGame.value && currentGame.value.status !== 'finished') {
+              currentGame.value = {
+                ...currentGame.value,
+                status: 'finished',
+                winner: ''
+              }
+              if (currentRoom.value) {
+                currentRoom.value.status = 'finished'
+              }
+            }
+          } catch (e) {
+            console.warn('处理 draw_accepted 回退时出错:', e)
+          }
+          break
+        case 'draw_rejected':
+          // 拒绝求和仅提示，不改变状态
+          break
+        case 'resigned':
+          // 回退逻辑：若未收到 game_ended，也将本地状态置为 finished，并设置胜者
+          try {
+            if (currentGame.value && currentGame.value.status !== 'finished') {
+              let winnerId = ''
+              if (currentRoom.value?.players) {
+                const resignedId = message.data?.playerId
+                const other = currentRoom.value.players.find(p => p.id !== resignedId)
+                winnerId = other?.id || ''
+              }
+              currentGame.value = {
+                ...currentGame.value,
+                status: 'finished',
+                winner: winnerId
+              }
+              if (currentRoom.value) {
+                currentRoom.value.status = 'finished'
+              }
+            }
+          } catch (e) {
+            console.warn('处理 resigned 回退时出错:', e)
           }
           break
         case 'player_joined':
@@ -465,6 +585,7 @@ export const usePvpStore = defineStore('pvp', () => {
     error,
     chatMessages,
     connectionStatus,
+    drawOffer,
     
     // 计算属性
     isConnected,
@@ -483,6 +604,10 @@ export const usePvpStore = defineStore('pvp', () => {
     startGame,
     makeMove,
     sendChatMessage,
+    requestDraw,
+    acceptDraw,
+    rejectDraw,
+    resign,
     clearError,
     handleWebSocketMessage,
     setConnectionStatus,

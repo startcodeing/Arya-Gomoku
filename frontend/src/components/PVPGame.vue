@@ -212,6 +212,24 @@
       </div>
     </div>
 
+    <!-- 求和弹窗（对方发起） -->
+    <div v-if="drawOffer" class="modal-overlay">
+      <div class="modal draw-offer-modal" @click.stop>
+        <h2>对手请求平局</h2>
+        <div class="result-content">
+          <div class="result-icon">🤝</div>
+          <div class="result-text">
+            <h3>{{ drawOffer?.fromPlayerName }} 向你发起求和</h3>
+            <p>是否接受平局？</p>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button @click="acceptDrawOffer" class="lobby-button">接受</button>
+          <button @click="rejectDrawOffer" class="close-button">拒绝</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 游戏结果弹窗 -->
     <div v-if="showGameResult" class="modal-overlay" @click="closeGameResult">
       <div class="modal game-result-modal" @click.stop>
@@ -313,6 +331,8 @@ const isLoading = computed(() => pvpStore.isLoading)
 const errorMessage = computed(() => pvpStore.error)
 const connectionStatus = computed(() => pvpStore.connectionStatus)
 const isMyTurn = computed(() => pvpStore.isMyTurn)
+// 求和请求（来自对手）
+const drawOffer = computed(() => pvpStore.drawOffer)
 
 // 游戏相关计算属性
 const gameBoard = computed(() => {
@@ -394,13 +414,15 @@ async function leaveGame() {
 }
 
 function requestDraw() {
-  // TODO: Implement draw request functionality
-  showSuccess('求和请求已发送')
+  // 通过store向对手发起求和
+  pvpStore.requestDraw()
+  showSuccess('已向对手发出求和请求')
 }
 
 function surrender() {
-  // TODO: Implement surrender functionality
-  showSuccess('已认输')
+  // 通过store发送认输
+  pvpStore.resign()
+  showSuccess('你已认输，等待结果同步')
 }
 
 function viewResult() {
@@ -426,6 +448,17 @@ function sendMessage() {
   
   pvpStore.sendChatMessage(newMessage.value)
   newMessage.value = ''
+}
+
+// 求和弹窗操作
+function acceptDrawOffer() {
+  pvpStore.acceptDraw()
+  showSuccess('已接受对手的求和')
+}
+
+function rejectDrawOffer() {
+  pvpStore.rejectDraw()
+  showSuccess('已拒绝对手的求和')
 }
 
 function highlightMove(move: Move) {
@@ -554,7 +587,8 @@ watch(() => game.value?.status, (newStatus, oldStatus) => {
       gameResult.value = {
         winner: game.value.winner,
         winnerName: game.value.winner ? getPlayerName(game.value.winner) : undefined,
-        reason: 'win', // 默认为获胜
+        // 若无winner则视为求和/平局
+        reason: game.value.winner ? 'win' : 'draw',
         finalBoard: game.value.board,
         moves: game.value.moves,
         duration: gameStartTime.value ? 

@@ -21,10 +21,7 @@ func main() {
 	config.AllowOrigins = []string{
 		"http://localhost:5173",
 		"http://0.0.0.0:5173",
-		"http://localhost:5174",
-		"http://0.0.0.0:5174",
-		"http://192.168.0.107:5173",
-		"http://192.168.0.107:5174",
+		"http://192.168.0.109:5173",
 	}
 	config.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
 	config.AllowHeaders = []string{"Origin", "Content-Type", "Accept", "Authorization"}
