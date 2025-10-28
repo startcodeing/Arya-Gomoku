@@ -5,6 +5,7 @@ import RoomLobby from '../components/RoomLobby.vue'
 import PVPGame from '../components/PVPGame.vue'
 import GameResult from '../components/GameResult.vue'
 import InvitePage from '../components/InvitePage.vue'
+import LLMBattle from '../components/LLMBattle.vue'
 
 const routes = [
   {
@@ -40,6 +41,11 @@ const routes = [
     name: 'InvitePage',
     component: InvitePage,
     props: true
+  },
+  {
+    path: '/llm-battle',
+    name: 'LLMBattle',
+    component: LLMBattle
   }
 ]
 

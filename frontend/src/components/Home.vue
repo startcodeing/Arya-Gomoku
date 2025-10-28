@@ -9,8 +9,20 @@
       <div class="mode-card" @click="startAIGame">
         <div class="mode-icon">🤖</div>
         <h3>人机对战</h3>
-        <p>与AI进行五子棋对战</p>
+        <p>与传统AI进行五子棋对战</p>
         <button class="mode-button">开始游戏</button>
+      </div>
+
+      <div class="mode-card llm-card" @click="goToLLMBattle">
+        <div class="mode-icon">🧠</div>
+        <h3>与AI对战</h3>
+        <p>与先进的大语言模型AI对战</p>
+        <div class="llm-features">
+          <span class="feature-tag">DeepSeek</span>
+          <span class="feature-tag">ChatGPT</span>
+          <span class="feature-tag">Ollama</span>
+        </div>
+        <button class="mode-button llm-button">挑战AI</button>
       </div>
 
       <div class="mode-card" @click="goToPVP">
@@ -44,7 +56,6 @@
             :is-ai-thinking="isAiThinking"
             :statistics="statistics"
             @restart="handleRestart"
-            @back="backToHome"
           />
         </div>
       </div>
@@ -73,9 +84,9 @@
 <script setup lang="ts">
 import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import Board from './Board.vue'
+import GameBoard from './Board.vue'
 import ControlPanel from './ControlPanel.vue'
-import { Player, GameStatus, type Position, type BoardState } from '../types/game'
+import { Player, GameStatus, type Position, type BoardState, type AIRequest } from '../types/game'
 import { aiApi } from '../services/api'
 import {
   createInitialGameState,
@@ -124,6 +135,11 @@ function backToHome() {
 
 function goToPVP() {
   router.push('/pvp')
+}
+
+function goToLLMBattle() {
+  // 导航到LLM对战页面
+  router.push('/llm-battle')
 }
 
 async function handlePlayerMove(x: number, y: number) {
@@ -357,6 +373,76 @@ function clearMessages() {
 .mode-button:hover {
   transform: scale(1.05);
   box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+}
+
+.llm-card {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: 2px solid #ffd700;
+  position: relative;
+  overflow: hidden;
+}
+
+.llm-card::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: linear-gradient(45deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+  transform: rotate(45deg);
+  animation: shimmer 3s infinite;
+}
+
+.llm-card h3 {
+  color: white;
+}
+
+.llm-card p {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.llm-features {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.feature-tag {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+  padding: 4px 12px;
+  border-radius: 15px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.llm-button {
+  background: linear-gradient(135deg, #ffd700 0%, #ffed4e 100%);
+  color: #333;
+  font-weight: 600;
+  border: none;
+  box-shadow: 0 4px 15px rgba(255, 215, 0, 0.3);
+}
+
+.llm-button:hover {
+  background: linear-gradient(135deg, #ffed4e 0%, #ffd700 100%);
+  transform: scale(1.05);
+  box-shadow: 0 6px 20px rgba(255, 215, 0, 0.4);
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%) translateY(-100%) rotate(45deg);
+  }
+  100% {
+    transform: translateX(100%) translateY(100%) rotate(45deg);
+  }
 }
 
 .ai-game-section {
