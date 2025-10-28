@@ -84,7 +84,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import GameBoard from './Board.vue'
+import Board from './Board.vue'
 import ControlPanel from './ControlPanel.vue'
 import { Player, GameStatus, type Position, type BoardState, type AIRequest } from '../types/game'
 import { aiApi } from '../services/api'

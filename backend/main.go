@@ -71,8 +71,8 @@ func main() {
 	}
 
 	// Start server on port 8081, bind to all interfaces for LAN access
-	log.Println("Starting Gomoku backend server on 0.0.0.0:8081")
-	if err := http.ListenAndServe("0.0.0.0:8081", r); err != nil {
+	log.Println("Starting Gomoku backend server on 0.0.0.0:8080")
+	if err := http.ListenAndServe("0.0.0.0:8080", r); err != nil {
 		log.Fatal("Failed to start server:", err)
 	}
 }
