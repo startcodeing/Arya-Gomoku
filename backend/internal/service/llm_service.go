@@ -3,6 +3,7 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -16,20 +17,30 @@ type LLMService struct {
 	adapters map[string]LLMAdapter
 	games    map[string]*model.LLMGame
 	configs  map[string]model.LLMConfig
+	cache    CacheInterface
 	mutex    sync.RWMutex
 }
 
 // NewLLMService creates a new LLM service instance
 func NewLLMService() *LLMService {
+	// Initialize cache with default configuration
+	cacheConfig := CacheConfig{
+		Type:     CacheTypeMemory,
+		Capacity: 1000, // 缓存1000个LLM响应
+	}
+	cacheFactory := NewCacheFactory(cacheConfig)
+	cache := cacheFactory.CreateCache()
+
 	service := &LLMService{
 		adapters: make(map[string]LLMAdapter),
 		games:    make(map[string]*model.LLMGame),
 		configs:  make(map[string]model.LLMConfig),
+		cache:    cache,
 	}
 
 	// Register available adapters
 	service.registerAdapters()
-	
+
 	// Set default configurations
 	service.setDefaultConfigs()
 
@@ -47,9 +58,9 @@ func (s *LLMService) registerAdapters() {
 func (s *LLMService) setDefaultConfigs() {
 	// DeepSeek default config
 	s.configs["deepseek"] = model.LLMConfig{
-		ModelName:  "deepseek",
-		APIKey:     "", // To be set by user
-		Endpoint:   "https://api.deepseek.com/v1/chat/completions",
+		ModelName: "deepseek",
+		APIKey:    "sk-005336ebfe3c491b925765238fc39f4f", // To be set by user
+		Endpoint:  "https://api.deepseek.com/v1/chat/completions",
 		Parameters: map[string]interface{}{
 			"temperature": 0.7,
 			"max_tokens":  1000,
@@ -58,9 +69,9 @@ func (s *LLMService) setDefaultConfigs() {
 
 	// ChatGPT default config
 	s.configs["chatgpt"] = model.LLMConfig{
-		ModelName:  "chatgpt",
-		APIKey:     "", // To be set by user
-		Endpoint:   "https://api.openai.com/v1/chat/completions",
+		ModelName: "chatgpt",
+		APIKey:    "", // To be set by user
+		Endpoint:  "https://api.openai.com/v1/chat/completions",
 		Parameters: map[string]interface{}{
 			"model":       "gpt-3.5-turbo",
 			"temperature": 0.7,
@@ -70,9 +81,9 @@ func (s *LLMService) setDefaultConfigs() {
 
 	// Ollama default config
 	s.configs["ollama"] = model.LLMConfig{
-		ModelName:  "ollama",
-		APIKey:     "", // Not required for Ollama
-		Endpoint:   "http://localhost:11434/api/generate",
+		ModelName: "ollama",
+		APIKey:    "", // Not required for Ollama
+		Endpoint:  "http://localhost:11434/api/generate",
 		Parameters: map[string]interface{}{
 			"model":       "llama2",
 			"temperature": 0.7,
@@ -162,13 +173,42 @@ func (s *LLMService) MakeMove(gameID string, humanMove model.Move) (*model.LLMRe
 		}, nil
 	}
 
-	// Get LLM move
+	// Get LLM move with caching
 	config := s.configs[game.ModelName]
 	adapter := s.adapters[game.ModelName]
+
+	// Generate cache key based on board state and model
+	cacheKey := GenerateCacheKey(game.Board.Grid, game.ModelName)
 	
-	llmMovePtr, err := adapter.GetMove(game.Board.Grid, humanMove, config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get LLM move: %v", err)
+	// Try to get from cache first
+	var llmMovePtr *model.LLMMove
+	if cachedMove, found := s.cache.Get(cacheKey); found {
+		// Cache hit - deserialize the cached move
+		if moveData, ok := cachedMove.([]byte); ok {
+			var cachedLLMMove model.LLMMove
+			if err := json.Unmarshal(moveData, &cachedLLMMove); err == nil {
+				llmMovePtr = &cachedLLMMove
+				// Update timestamp for current game
+				llmMovePtr.Timestamp = time.Now()
+			}
+		}
+	}
+
+	// If not in cache, get from LLM adapter
+	if llmMovePtr == nil {
+		move, err := adapter.GetMove(game.Board.Grid, humanMove, config)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get LLM move: %v", err)
+		}
+		llmMovePtr = move
+
+		// Cache the LLM response
+		if moveData, err := json.Marshal(*llmMovePtr); err == nil {
+			// Determine cache TTL based on game progress
+			moveCount := len(game.Moves)
+			ttl := GetCacheTTL(moveCount)
+			s.cache.Set(cacheKey, moveData, ttl)
+		}
 	}
 
 	// Validate LLM move
@@ -184,7 +224,7 @@ func (s *LLMService) MakeMove(gameID string, humanMove model.Move) (*model.LLMRe
 	llmMovePtr.Player = 2
 	llmMovePtr.GameID = gameID
 	llmMovePtr.Timestamp = time.Now()
-	
+
 	game.AddMove(*llmMovePtr)
 	game.Board.MakeMove(llmMovePtr.X, llmMovePtr.Y, 2)
 
@@ -239,7 +279,7 @@ func (s *LLMService) GetAvailableModels() []model.LLMModel {
 	var models []model.LLMModel
 	for name, adapter := range s.adapters {
 		modelInfo := adapter.GetModelInfo()
-		
+
 		// Check if model is configured
 		config, exists := s.configs[name]
 		if exists && config.APIKey != "" {
@@ -249,7 +289,7 @@ func (s *LLMService) GetAvailableModels() []model.LLMModel {
 		} else {
 			modelInfo.Status = "not_configured"
 		}
-		
+
 		models = append(models, modelInfo)
 	}
 
@@ -291,7 +331,7 @@ func (s *LLMService) GetConfig(modelName string) (*model.LLMConfig, error) {
 	// Don't expose API key in response
 	safeCopy := config
 	safeCopy.APIKey = ""
-	
+
 	return &safeCopy, nil
 }
 
@@ -306,6 +346,23 @@ func (s *LLMService) DeleteGame(gameID string) error {
 
 	delete(s.games, gameID)
 	return nil
+}
+
+// GetCacheStats returns cache statistics
+func (s *LLMService) GetCacheStats() CacheStats {
+	return s.cache.Stats()
+}
+
+// ClearCache clears all cached LLM responses
+func (s *LLMService) ClearCache() error {
+	return s.cache.Clear()
+}
+
+// CleanExpiredCache cleans expired cache entries (for memory cache)
+func (s *LLMService) CleanExpiredCache() {
+	if memCache, ok := s.cache.(*MemoryCache); ok {
+		memCache.CleanExpired()
+	}
 }
 
 // Helper methods
@@ -334,10 +391,10 @@ func (s *LLMService) findValidMove(board [][]int) model.Move {
 // checkWin checks if a player has won
 func (s *LLMService) checkWin(board [][]int, x, y, player int) bool {
 	directions := [][2]int{{1, 0}, {0, 1}, {1, 1}, {1, -1}}
-	
+
 	for _, dir := range directions {
 		count := 1
-		
+
 		// Check positive direction
 		for i := 1; i < 5; i++ {
 			nx, ny := x+dir[0]*i, y+dir[1]*i
@@ -346,7 +403,7 @@ func (s *LLMService) checkWin(board [][]int, x, y, player int) bool {
 			}
 			count++
 		}
-		
+
 		// Check negative direction
 		for i := 1; i < 5; i++ {
 			nx, ny := x-dir[0]*i, y-dir[1]*i
@@ -355,12 +412,12 @@ func (s *LLMService) checkWin(board [][]int, x, y, player int) bool {
 			}
 			count++
 		}
-		
+
 		if count >= 5 {
 			return true
 		}
 	}
-	
+
 	return false
 }
 

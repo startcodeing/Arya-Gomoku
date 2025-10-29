@@ -39,7 +39,7 @@
             <Calendar class="h-4 w-4 mr-1 text-green-500" />
             <span class="text-sm font-medium text-green-700">开始时间</span>
           </div>
-          <div class="text-xs text-green-600">{{ formatTime(currentGame.startTime) }}</div>
+          <div class="text-xs text-green-600">{{ formatTime(currentGame.createdAt) }}</div>
         </div>
       </div>
 
@@ -279,7 +279,7 @@ async function copyGameInfo() {
   
   const info = `
 游戏ID: ${currentGame.value.id}
-开始时间: ${formatTime(currentGame.value.startTime)}
+开始时间: ${formatTime(currentGame.value.createdAt)}
 AI模型: ${selectedModel.value?.name || 'Unknown'}
 游戏状态: ${currentGame.value.status}
 总步数: ${gameStats.value.totalMoves}

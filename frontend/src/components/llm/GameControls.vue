@@ -54,7 +54,7 @@
         </div>
         <div v-else-if="!isGameActive" class="flex items-center text-blue-600">
           <Info class="h-4 w-4 mr-2" />
-          点击"开始游戏"开始与 {{ selectedModelInfo.display_name }} 对战
+          点击"开始游戏"开始与 {{ selectedModelInfo.displayName }} 对战
         </div>
         <div v-else-if="isThinking" class="flex items-center text-purple-600">
           <Brain class="h-4 w-4 mr-2 animate-pulse" />

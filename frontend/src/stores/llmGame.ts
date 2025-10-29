@@ -1,348 +1,352 @@
-// LLM对战状态管理 Store
-// 使用 Pinia 管理LLM游戏状态
-
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
-import { llmApi, llmGameUtils } from '../services/llmApi'
-import type {
-  LLMGame,
-  LLMModel,
-  LLMMove,
-  LLMGameStatus,
-  LLMConfigRequest,
-  LLMConfigResponse,
-  Move
-} from '../types/game'
+import { ref, computed, reactive } from 'vue'
+import { llmApi } from '../services/llmApi'
+import { Player, GameStatus, type Position, type BoardState } from '../types/game'
+import { createInitialGameState, makeMove, getGameStatus, BOARD_SIZE } from '../utils/gameLogic'
+
+export interface LLMModel {
+  id: string
+  name: string
+  provider: string
+  description?: string
+}
+
+export interface LLMConfig {
+  temperature: number
+  maxTokens: number
+  systemPrompt: string
+}
+
+export interface LLMGameSession {
+  id: string
+  status: 'playing' | 'finished'
+  board: number[][]
+  moves: Position[]
+  currentPlayer: Player
+  winner?: Player
+  startedAt: string
+  finishedAt?: string
+}
 
 export const useLLMGameStore = defineStore('llmGame', () => {
-  // ===== 状态定义 =====
-  
-  // 当前游戏信息
-  const currentGame = ref<LLMGame | null>(null)
-  
-  // 可用模型列表
+  // 基础状态 - 简化版本，参考Home.vue模式
+  const gameState = reactive<BoardState>(createInitialGameState())
+  const currentSession = ref<LLMGameSession | null>(null)
   const availableModels = ref<LLMModel[]>([])
+  const selectedModel = ref<LLMModel | null>(null)
+  const modelConfig = ref<LLMConfig>({
+    temperature: 0.7,
+    maxTokens: 1000,
+    systemPrompt: '你是一个五子棋专家，请分析当前棋局并选择最佳落子位置。'
+  })
   
-  // 当前选择的模型
-  const selectedModel = ref<string>('deepseek')
-  
-  // 游戏状态
-  const isGameActive = ref(false)
+  // 状态标志
   const isLoading = ref(false)
-  const isThinking = ref(false)
-  
-  // 错误信息
+  const isAiThinking = ref(false)
   const error = ref<string | null>(null)
+  const moveHistory = ref<Position[]>([])
   
-  // 最后一次AI移动信息
-  const lastAIMove = ref<LLMMove | null>(null)
-  
-  // 模型配置状态
-  const modelConfigs = ref<Record<string, LLMConfigResponse>>({})
-  
-  // ===== 计算属性 =====
-  
-  // 当前棋盘状态
-  const board = computed(() => {
-    return currentGame.value?.board || Array(15).fill(null).map(() => Array(15).fill(0))
+  // 统计数据
+  const statistics = reactive({
+    humanWins: 0,
+    aiWins: 0,
+    draws: 0,
+    totalGames: 0
   })
+
+  // 计算属性
+  const board = computed(() => gameState.board)
+  const gameStatus = computed(() => gameState.gameStatus)
+  const currentPlayer = computed(() => gameState.currentPlayer)
+  const lastMove = computed(() => gameState.lastMove)
+  const moveCount = computed(() => moveHistory.value.length)
   
-  // 游戏状态
-  const gameStatus = computed(() => {
-    return currentGame.value?.status || 'playing'
-  })
-  
-  // 是否游戏结束
-  const isGameFinished = computed(() => {
-    return llmGameUtils.isGameFinished(gameStatus.value)
-  })
-  
-  // 游戏结果消息
-  const gameResultMessage = computed(() => {
-    return llmGameUtils.getGameResultMessage(gameStatus.value)
-  })
-  
-  // 可用的已配置模型
-  const configuredModels = computed(() => {
-    return availableModels.value.filter(model => model.status === 'available')
-  })
-  
-  // 当前选择的模型信息
-  const selectedModelInfo = computed(() => {
-    return availableModels.value.find(model => model.name === selectedModel.value)
-  })
-  
-  // 移动历史
-  const moveHistory = computed(() => {
-    return currentGame.value?.moves || []
-  })
-  
-  // 游戏统计
-  const gameStats = computed(() => {
-    const moves = moveHistory.value
-    return {
-      totalMoves: moves.length,
-      humanMoves: moves.filter(move => move.player === 1).length,
-      aiMoves: moves.filter(move => move.player === 2).length,
-      gameDuration: currentGame.value ? 
-        llmGameUtils.calculateGameDuration(currentGame.value.start_time, currentGame.value.end_time) : 
-        '0秒'
-    }
-  })
-  
-  // ===== Actions =====
-  
-  // 加载可用模型
+  const canMakeMove = computed(() => 
+    gameState.gameStatus === GameStatus.PLAYING && 
+    gameState.currentPlayer === Player.HUMAN &&
+    !isLoading.value && 
+    !isAiThinking.value
+  )
+
+  const isGameActive = computed(() => gameState.gameStatus === GameStatus.PLAYING)
+
+  // Actions
   async function loadAvailableModels() {
+    if (isLoading.value) return
+    
+    isLoading.value = true
+    error.value = null
+    
     try {
-      isLoading.value = true
-      error.value = null
-      
       const response = await llmApi.getModels()
-      if (response.success && response.data) {
-        availableModels.value = response.data
-        
-        // 如果当前选择的模型不可用，选择第一个可用的模型
-        if (!configuredModels.value.find(model => model.name === selectedModel.value)) {
-          const firstAvailable = configuredModels.value[0]
-          if (firstAvailable) {
-            selectedModel.value = firstAvailable.name
-          }
-        }
-      } else {
-        throw new Error(response.error || '加载模型列表失败')
+      availableModels.value = response.models || []
+      
+      // 自动选择第一个模型
+      if (availableModels.value.length > 0 && !selectedModel.value) {
+        selectedModel.value = availableModels.value[0]
       }
-    } catch (err) {
-      error.value = err instanceof Error ? err.message : '加载模型列表失败'
-      console.error('Failed to load models:', err)
+    } catch (err: any) {
+      error.value = err.message || '加载模型列表失败'
+      console.error('加载模型失败:', err)
     } finally {
       isLoading.value = false
     }
   }
-  
-  // 开始新游戏
-  async function startNewGame(modelName?: string) {
-    try {
-      isLoading.value = true
-      error.value = null
-      
-      const model = modelName || selectedModel.value
-      
-      // 检查模型是否可用
-      const modelInfo = availableModels.value.find(m => m.name === model)
-      if (!modelInfo || modelInfo.status !== 'available') {
-        throw new Error(`模型 ${model} 不可用，请先配置API密钥`)
-      }
-      
-      const response = await llmApi.startGame(model)
-      if (response.success && response.data) {
-        currentGame.value = response.data
-        selectedModel.value = model
-        isGameActive.value = true
-        lastAIMove.value = null
-      } else {
-        throw new Error(response.error || '开始游戏失败')
-      }
-    } catch (err) {
-      error.value = err instanceof Error ? err.message : '开始游戏失败'
-      console.error('Failed to start game:', err)
-    } finally {
-      isLoading.value = false
-    }
-  }
-  
-  // 进行移动
-  async function makeMove(x: number, y: number) {
-    if (!currentGame.value || isGameFinished.value || isThinking.value) {
+
+  async function startNewGame() {
+    if (!selectedModel.value) {
+      error.value = '请先选择一个AI模型'
       return
     }
-    
-    try {
-      isThinking.value = true
-      error.value = null
-      
-      const response = await llmApi.makeMove(currentGame.value.game_id, x, y)
-      if (response.success && response.data) {
-        const { move, game_status, message } = response.data
-        
-        // 更新棋盘状态
-        if (currentGame.value) {
-          // 添加人类移动
-          const humanMove: Move = { x, y, player: 1 }
-          currentGame.value.moves.push(humanMove)
-          currentGame.value.board[y][x] = 1
-          
-          // 添加AI移动（如果有）
-          if (move) {
-            const aiMove: Move = { x: move.x, y: move.y, player: 2 }
-            currentGame.value.moves.push(aiMove)
-            currentGame.value.board[move.y][move.x] = 2
-            lastAIMove.value = move
-          }
-          
-          // 更新游戏状态
-          currentGame.value.status = game_status
-          
-          // 如果游戏结束，设置结束时间
-          if (llmGameUtils.isGameFinished(game_status)) {
-            currentGame.value.end_time = new Date().toISOString()
-            isGameActive.value = false
-          }
-        }
-      } else {
-        throw new Error(response.error || '移动失败')
-      }
-    } catch (err) {
-      error.value = err instanceof Error ? err.message : '移动失败'
-      console.error('Failed to make move:', err)
-    } finally {
-      isThinking.value = false
-    }
-  }
-  
-  // 结束当前游戏
-  async function endGame() {
-    if (currentGame.value) {
-      try {
-        await llmApi.deleteGame(currentGame.value.game_id)
-      } catch (err) {
-        console.warn('Failed to delete game:', err)
-      }
-    }
-    
-    currentGame.value = null
-    isGameActive.value = false
-    isThinking.value = false
-    lastAIMove.value = null
+
+    isLoading.value = true
     error.value = null
-  }
-  
-  // 重新开始游戏
-  async function restartGame() {
-    const model = selectedModel.value
-    await endGame()
-    await startNewGame(model)
-  }
-  
-  // 更新模型配置
-  async function updateModelConfig(modelName: string, config: LLMConfigRequest) {
+
     try {
-      isLoading.value = true
-      error.value = null
-      
-      const response = await llmApi.updateConfig(modelName, config)
-      if (response.success) {
-        // 重新加载模型列表以更新状态
-        await loadAvailableModels()
-        
-        // 加载更新后的配置
-        await loadModelConfig(modelName)
-      } else {
-        throw new Error(response.error || '更新配置失败')
+      const response = await llmApi.startGame({
+        modelId: selectedModel.value.id,
+        config: modelConfig.value
+      })
+
+      // 重置游戏状态
+      Object.assign(gameState, createInitialGameState())
+      moveHistory.value = []
+      currentSession.value = {
+        id: response.gameId,
+        status: 'playing',
+        board: gameState.board,
+        moves: [],
+        currentPlayer: Player.HUMAN,
+        startedAt: new Date().toISOString()
       }
-    } catch (err) {
-      error.value = err instanceof Error ? err.message : '更新配置失败'
-      console.error('Failed to update config:', err)
-      throw err
+
+      clearError()
+    } catch (err: any) {
+      error.value = err.message || '开始游戏失败'
+      console.error('开始游戏失败:', err)
     } finally {
       isLoading.value = false
     }
   }
-  
-  // 加载模型配置
-  async function loadModelConfig(modelName: string) {
+
+  async function makePlayerMove(x: number, y: number) {
+    if (!canMakeMove.value || !currentSession.value) return false
+
     try {
-      const response = await llmApi.getConfig(modelName)
-      if (response.success && response.data) {
-        modelConfigs.value[modelName] = response.data
+      isLoading.value = true
+
+      // 执行玩家移动
+      if (!makeMove(gameState.board, x, y, Player.HUMAN)) {
+        error.value = '无效的移动位置'
+        return false
       }
-    } catch (err) {
-      console.warn(`Failed to load config for ${modelName}:`, err)
+
+      // 记录移动
+      const move: Position = { x, y }
+      moveHistory.value.push(move)
+      gameState.lastMove = move
+
+      // 检查游戏状态
+      gameState.gameStatus = getGameStatus(gameState.board, move)
+      
+      if (gameState.gameStatus !== GameStatus.PLAYING) {
+        await handleGameEnd()
+        return true
+      }
+
+      // 切换到AI回合并获取AI移动
+      gameState.currentPlayer = Player.AI
+      await getAIMove()
+      
+      return true
+    } catch (err: any) {
+      error.value = err.message || '移动失败'
+      console.error('玩家移动失败:', err)
+      return false
+    } finally {
+      isLoading.value = false
     }
   }
-  
-  // 选择模型
-  function selectModel(modelName: string) {
-    const modelInfo = availableModels.value.find(m => m.name === modelName)
-    if (modelInfo && modelInfo.status === 'available') {
-      selectedModel.value = modelName
+
+  async function getAIMove() {
+    if (!currentSession.value) return
+
+    try {
+      isAiThinking.value = true
+
+      const response = await llmApi.makeMove(currentSession.value.id, {
+        x: gameState.lastMove?.x || 0,
+        y: gameState.lastMove?.y || 0
+      })
+
+      // 后端返回的数据结构是 { data: { move: {...}, gameStatus: "...", reasoning: "..." } }
+      const llmResponse = response.data || response
+      const aiMoveData = llmResponse.move || llmResponse.Move
+
+      // 验证AI移动数据
+      if (!aiMoveData || typeof aiMoveData.x !== 'number' || typeof aiMoveData.y !== 'number') {
+        throw new Error('AI返回的移动数据格式无效')
+      }
+
+      // 验证AI移动位置
+      if (!isValidMove(aiMoveData.x, aiMoveData.y)) {
+        throw new Error('AI返回了无效的移动位置')
+      }
+
+      // 执行AI移动
+      if (!makeMove(gameState.board, aiMoveData.x, aiMoveData.y, Player.AI)) {
+        throw new Error('AI移动执行失败')
+      }
+
+      // 记录AI移动
+      const aiMove: Position = { x: aiMoveData.x, y: aiMoveData.y }
+      moveHistory.value.push(aiMove)
+      gameState.lastMove = aiMove
+
+      // 更新游戏状态（使用后端返回的状态）
+      const backendGameStatus = llmResponse.gameStatus || llmResponse.GameStatus
+      if (backendGameStatus) {
+        switch (backendGameStatus) {
+          case 'playing':
+            gameState.gameStatus = GameStatus.PLAYING
+            break
+          case 'ai_win':
+            gameState.gameStatus = GameStatus.AI_WIN
+            break
+          case 'human_win':
+            gameState.gameStatus = GameStatus.HUMAN_WIN
+            break
+          case 'draw':
+            gameState.gameStatus = GameStatus.DRAW
+            break
+          default:
+            // 如果后端状态未知，使用前端逻辑检查
+            gameState.gameStatus = getGameStatus(gameState.board, aiMove)
+        }
+      } else {
+        // 如果后端没有返回状态，使用前端逻辑检查
+        gameState.gameStatus = getGameStatus(gameState.board, aiMove)
+      }
+      
+      if (gameState.gameStatus !== GameStatus.PLAYING) {
+        await handleGameEnd()
+        return
+      }
+
+      // 切换回玩家回合
+      gameState.currentPlayer = Player.HUMAN
+
+    } catch (err: any) {
+      error.value = err.message || 'AI移动失败'
+      console.error('AI移动失败:', err)
+      // 如果AI移动失败，切换回玩家回合
+      gameState.currentPlayer = Player.HUMAN
+    } finally {
+      isAiThinking.value = false
     }
   }
-  
-  // 清除错误
+
+  function isValidMove(x: number, y: number): boolean {
+    return x >= 0 && x < BOARD_SIZE && 
+           y >= 0 && y < BOARD_SIZE && 
+           gameState.board[y][x] === Player.NONE
+  }
+
+  async function handleGameEnd() {
+    if (!currentSession.value) return
+
+    // 更新统计数据
+    statistics.totalGames++
+    
+    switch (gameState.gameStatus) {
+      case GameStatus.HUMAN_WIN:
+        statistics.humanWins++
+        gameState.winner = Player.HUMAN
+        break
+      case GameStatus.AI_WIN:
+        statistics.aiWins++
+        gameState.winner = Player.AI
+        break
+      case GameStatus.DRAW:
+        statistics.draws++
+        break
+    }
+
+    // 更新会话状态
+    currentSession.value.status = 'finished'
+    currentSession.value.finishedAt = new Date().toISOString()
+    currentSession.value.winner = gameState.winner
+  }
+
+  function restartGame() {
+    // 重置游戏状态
+    Object.assign(gameState, createInitialGameState())
+    moveHistory.value = []
+    currentSession.value = null
+    clearError()
+  }
+
+  function selectModel(model: LLMModel) {
+    selectedModel.value = model
+  }
+
+  function updateModelConfig(config: Partial<LLMConfig>) {
+    Object.assign(modelConfig.value, config)
+  }
+
   function clearError() {
     error.value = null
   }
-  
-  // 检查位置是否可以下棋
-  function canMakeMove(x: number, y: number): boolean {
-    if (!currentGame.value || isGameFinished.value || isThinking.value) {
-      return false
+
+  // 辅助方法
+  function getPieceAt(x: number, y: number): Player {
+    if (x < 0 || x >= BOARD_SIZE || y < 0 || y >= BOARD_SIZE) {
+      return Player.NONE
     }
-    
-    // 检查坐标是否有效
-    if (x < 0 || x >= 15 || y < 0 || y >= 15) {
-      return false
-    }
-    
-    // 检查位置是否为空
-    return currentGame.value.board[y][x] === 0
+    return gameState.board[y][x]
   }
-  
-  // 获取最后一步移动
-  function getLastMove(): Move | null {
-    const moves = moveHistory.value
-    return moves.length > 0 ? moves[moves.length - 1] : null
+
+  function getLastMove(): Position | null {
+    return gameState.lastMove || null
   }
-  
-  // 获取指定位置的棋子
-  function getPieceAt(x: number, y: number): number {
-    if (x < 0 || x >= 15 || y < 0 || y >= 15) {
-      return 0
-    }
-    return board.value[y][x]
+
+  // 初始化
+  function initialize() {
+    loadAvailableModels()
   }
-  
-  // 初始化store
-  async function initialize() {
-    await loadAvailableModels()
-  }
-  
+
   return {
     // 状态
-    currentGame,
+    gameState,
+    currentSession,
     availableModels,
     selectedModel,
-    isGameActive,
+    modelConfig,
     isLoading,
-    isThinking,
+    isAiThinking,
     error,
-    lastAIMove,
-    modelConfigs,
+    moveHistory,
+    statistics,
     
     // 计算属性
     board,
     gameStatus,
-    isGameFinished,
-    gameResultMessage,
-    configuredModels,
-    selectedModelInfo,
-    moveHistory,
-    gameStats,
+    currentPlayer,
+    lastMove,
+    moveCount,
+    canMakeMove,
+    isGameActive,
     
-    // 方法
+    // Actions
     loadAvailableModels,
     startNewGame,
-    makeMove,
-    endGame,
+    makePlayerMove,
     restartGame,
-    updateModelConfig,
-    loadModelConfig,
     selectModel,
+    updateModelConfig,
     clearError,
-    canMakeMove,
-    getLastMove,
     getPieceAt,
+    getLastMove,
     initialize
   }
 })

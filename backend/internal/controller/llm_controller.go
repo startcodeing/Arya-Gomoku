@@ -298,14 +298,45 @@ func (c *LLMController) HealthCheck(ctx *gin.Context) {
 		}
 	}
 
+	// Get cache statistics
+	cacheStats := c.llmService.GetCacheStats()
+
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
 			"status":            "healthy",
 			"available_models":  availableCount,
 			"configured_models": configuredCount,
+			"cache_stats":       cacheStats,
 			"timestamp":         gin.H{},
 		},
 		"message": "LLM service is healthy",
+	})
+}
+
+// GetCacheStats handles GET /api/llm/cache/stats
+func (c *LLMController) GetCacheStats(ctx *gin.Context) {
+	stats := c.llmService.GetCacheStats()
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    stats,
+		"message": "Cache statistics retrieved successfully",
+	})
+}
+
+// ClearCache handles DELETE /api/llm/cache
+func (c *LLMController) ClearCache(ctx *gin.Context) {
+	if err := c.llmService.ClearCache(); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to clear cache",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Cache cleared successfully",
 	})
 }

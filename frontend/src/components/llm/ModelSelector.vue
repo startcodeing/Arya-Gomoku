@@ -25,7 +25,7 @@
               :class="getStatusColor(model.status)"
             ></div>
             <div>
-              <div class="font-medium text-gray-800">{{ model.display_name }}</div>
+              <div class="font-medium text-gray-800">{{ model.displayName }}</div>
               <div class="text-sm text-gray-500">{{ model.provider }}</div>
             </div>
           </div>

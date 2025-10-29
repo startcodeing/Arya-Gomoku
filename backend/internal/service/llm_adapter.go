@@ -32,7 +32,7 @@ type DeepSeekAdapter struct {
 func NewDeepSeekAdapter() *DeepSeekAdapter {
 	return &DeepSeekAdapter{
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: 90 * time.Second, // 增加超时时间以适应大模型响应时间
 		},
 	}
 }
@@ -45,7 +45,7 @@ func (d *DeepSeekAdapter) GetMove(board [][]int, lastMove model.Move, config mod
 
 	// Build the prompt for DeepSeek
 	prompt := d.buildGamePrompt(board, lastMove)
-	
+
 	// Prepare request payload
 	requestBody := map[string]interface{}{
 		"model": "deepseek-chat",
@@ -170,11 +170,11 @@ func (d *DeepSeekAdapter) GetModelInfo() model.LLMModel {
 // buildGamePrompt creates a prompt describing the current game state
 func (d *DeepSeekAdapter) buildGamePrompt(board [][]int, lastMove model.Move) string {
 	var prompt strings.Builder
-	
+
 	prompt.WriteString("当前五子棋棋局状态：\n")
 	prompt.WriteString("棋盘大小：15x15\n")
 	prompt.WriteString("玩家标记：1=人类玩家(黑子), 2=AI(白子), 0=空位\n\n")
-	
+
 	// Add board state
 	prompt.WriteString("棋盘状态：\n")
 	for y := 0; y < 15; y++ {
@@ -186,7 +186,7 @@ func (d *DeepSeekAdapter) buildGamePrompt(board [][]int, lastMove model.Move) st
 		}
 		prompt.WriteString("\n")
 	}
-	
+
 	prompt.WriteString(fmt.Sprintf("\n上一步棋：人类玩家在位置(%d, %d)下了黑子\n", lastMove.X, lastMove.Y))
 	prompt.WriteString("现在轮到你(AI)下白子。\n\n")
 	prompt.WriteString("请分析棋局并选择最佳落子位置。考虑因素包括：\n")
@@ -195,7 +195,7 @@ func (d *DeepSeekAdapter) buildGamePrompt(board [][]int, lastMove model.Move) st
 	prompt.WriteString("3. 是否能形成活三、活四等威胁\n")
 	prompt.WriteString("4. 整体战略布局\n\n")
 	prompt.WriteString("请返回JSON格式：{\"x\": 横坐标(0-14), \"y\": 纵坐标(0-14), \"reasoning\": \"你的分析过程\"}")
-	
+
 	return prompt.String()
 }
 
@@ -204,23 +204,23 @@ func (d *DeepSeekAdapter) parseMove(content string) (*model.LLMMove, error) {
 	// Try to find JSON in the response
 	start := strings.Index(content, "{")
 	end := strings.LastIndex(content, "}")
-	
+
 	if start == -1 || end == -1 || start >= end {
 		return nil, errors.New("no valid JSON found in response")
 	}
-	
+
 	jsonStr := content[start : end+1]
-	
+
 	var moveData struct {
 		X         int    `json:"x"`
 		Y         int    `json:"y"`
 		Reasoning string `json:"reasoning"`
 	}
-	
+
 	if err := json.Unmarshal([]byte(jsonStr), &moveData); err != nil {
 		return nil, fmt.Errorf("failed to parse JSON: %v", err)
 	}
-	
+
 	return &model.LLMMove{
 		X:          moveData.X,
 		Y:          moveData.Y,
@@ -259,7 +259,7 @@ type ChatGPTAdapter struct {
 func NewChatGPTAdapter() *ChatGPTAdapter {
 	return &ChatGPTAdapter{
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: 90 * time.Second, // 增加超时时间以适应大模型响应时间
 		},
 	}
 }
@@ -307,17 +307,103 @@ func NewOllamaAdapter() *OllamaAdapter {
 	}
 }
 
-// GetMove implements LLMAdapter interface for Ollama (placeholder implementation)
+// GetMove implements LLMAdapter interface for Ollama
 func (o *OllamaAdapter) GetMove(board [][]int, lastMove model.Move, config model.LLMConfig) (*model.LLMMove, error) {
-	return nil, errors.New("Ollama adapter not implemented yet")
+	// Build the prompt for Ollama
+	prompt := o.buildGamePrompt(board, lastMove)
+
+	// Prepare request payload for Ollama API
+	requestBody := map[string]interface{}{
+		"model":  config.ModelName,
+		"prompt": prompt,
+		"stream": false,
+		"options": map[string]interface{}{
+			"temperature": 0.7,
+			"num_predict": 1000,
+		},
+	}
+
+	// Add custom parameters if provided
+	if params, ok := config.Parameters["temperature"]; ok {
+		requestBody["options"].(map[string]interface{})["temperature"] = params
+	}
+	if params, ok := config.Parameters["num_predict"]; ok {
+		requestBody["options"].(map[string]interface{})["num_predict"] = params
+	}
+
+	jsonData, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %v", err)
+	}
+
+	// Create HTTP request
+	endpoint := config.Endpoint
+	if endpoint == "" {
+		endpoint = "http://localhost:11434/api/generate"
+	}
+
+	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	// Send request
+	resp, err := o.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse response
+	var response struct {
+		Response string `json:"response"`
+		Done     bool   `json:"done"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %v", err)
+	}
+
+	if !response.Done {
+		return nil, errors.New("incomplete response from Ollama API")
+	}
+
+	// Parse the move from response
+	move, err := o.parseMove(response.Response)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse move: %v", err)
+	}
+
+	// Validate move
+	if !o.isValidMove(board, move.X, move.Y) {
+		// If invalid, find a random valid move
+		validMove := o.findValidMove(board)
+		move.X = validMove.X
+		move.Y = validMove.Y
+		move.Reasoning = "原始选择无效，选择了一个有效位置：" + move.Reasoning
+	}
+
+	move.Player = 2 // LLM is player 2
+	move.Timestamp = time.Now()
+	move.GameID = "" // Will be set by service layer
+
+	return move, nil
 }
 
 // ValidateConfig validates Ollama configuration
 func (o *OllamaAdapter) ValidateConfig(config model.LLMConfig) error {
-	// Ollama doesn't require API key, just check endpoint
-	if config.Endpoint == "" {
-		return errors.New("endpoint is required for Ollama")
+	// Ollama doesn't require API key, but needs model name
+	if config.ModelName == "" {
+		return errors.New("model name is required for Ollama")
 	}
+	// Endpoint is optional, will use default if not provided
 	return nil
 }
 
@@ -327,11 +413,94 @@ func (o *OllamaAdapter) GetModelInfo() model.LLMModel {
 		Name:           "ollama",
 		DisplayName:    "Ollama Local",
 		Provider:       "ollama",
-		RequiresAPIKey: false,
+		RequiresAPIKey: true,
 		DefaultParams: map[string]interface{}{
 			"model":       "llama2",
 			"temperature": 0.7,
 		},
-		Status: "unavailable", // Not implemented yet
+		Status: "available", // Now implemented
 	}
+}
+
+// buildGamePrompt creates a prompt describing the current game state for Ollama
+func (o *OllamaAdapter) buildGamePrompt(board [][]int, lastMove model.Move) string {
+	var prompt strings.Builder
+
+	prompt.WriteString("当前五子棋棋局状态：\n")
+	prompt.WriteString("棋盘大小：15x15\n")
+	prompt.WriteString("玩家标记：1=人类玩家(黑子), 2=AI(白子), 0=空位\n\n")
+
+	// Add board state
+	prompt.WriteString("棋盘状态：\n")
+	for y := 0; y < 15; y++ {
+		for x := 0; x < 15; x++ {
+			if x > 0 {
+				prompt.WriteString(" ")
+			}
+			prompt.WriteString(strconv.Itoa(board[y][x]))
+		}
+		prompt.WriteString("\n")
+	}
+
+	prompt.WriteString(fmt.Sprintf("\n上一步棋：人类玩家在位置(%d, %d)下了黑子\n", lastMove.X, lastMove.Y))
+	prompt.WriteString("现在轮到你(AI)下白子。\n\n")
+	prompt.WriteString("请分析棋局并选择最佳落子位置。考虑因素包括：\n")
+	prompt.WriteString("1. 是否能形成五连获胜\n")
+	prompt.WriteString("2. 是否需要阻止对手形成五连\n")
+	prompt.WriteString("3. 是否能形成活三、活四等威胁\n")
+	prompt.WriteString("4. 整体战略布局\n\n")
+	prompt.WriteString("请返回JSON格式：{\"x\": 横坐标(0-14), \"y\": 纵坐标(0-14), \"reasoning\": \"你的分析过程\"}")
+
+	return prompt.String()
+}
+
+// parseMove parses the Ollama response to extract move information
+func (o *OllamaAdapter) parseMove(content string) (*model.LLMMove, error) {
+	// Try to find JSON in the response
+	start := strings.Index(content, "{")
+	end := strings.LastIndex(content, "}")
+
+	if start == -1 || end == -1 || start >= end {
+		return nil, errors.New("no valid JSON found in response")
+	}
+
+	jsonStr := content[start : end+1]
+
+	var moveData struct {
+		X         int    `json:"x"`
+		Y         int    `json:"y"`
+		Reasoning string `json:"reasoning"`
+	}
+
+	if err := json.Unmarshal([]byte(jsonStr), &moveData); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %v", err)
+	}
+
+	return &model.LLMMove{
+		X:          moveData.X,
+		Y:          moveData.Y,
+		Reasoning:  moveData.Reasoning,
+		Confidence: 0.8, // Default confidence for Ollama
+	}, nil
+}
+
+// isValidMove checks if a move is valid
+func (o *OllamaAdapter) isValidMove(board [][]int, x, y int) bool {
+	if x < 0 || x >= 15 || y < 0 || y >= 15 {
+		return false
+	}
+	return board[y][x] == 0
+}
+
+// findValidMove finds a random valid move as fallback
+func (o *OllamaAdapter) findValidMove(board [][]int) model.Move {
+	for y := 0; y < 15; y++ {
+		for x := 0; x < 15; x++ {
+			if board[y][x] == 0 {
+				return model.Move{X: x, Y: y}
+			}
+		}
+	}
+	// Should never reach here in a valid game
+	return model.Move{X: 7, Y: 7}
 }

@@ -35,20 +35,23 @@ graph TD
 
 ## 2. 技术描述
 
-- 前端：Vue 3 + TypeScript + Vite + Pinia + TailwindCSS
-- 后端：Golang + Gin + 现有 AI 服务
-- LLM 集成：DeepSeek API + ChatGPT API + Ollama 本地服务
-- 数据存储：内存存储（游戏状态）+ 本地存储（用户配置）
+* 前端：Vue 3 + TypeScript + Vite + Pinia + TailwindCSS
+
+* 后端：Golang + Gin + 现有 AI 服务
+
+* LLM 集成：DeepSeek API + ChatGPT API + Ollama 本地服务
+
+* 数据存储：内存存储（游戏状态）+ 本地存储（用户配置）
 
 ## 3. 路由定义
 
-| 路由 | 用途 |
-|------|------|
-| /home | 游戏主页，显示所有游戏模式选择 |
-| /ai-battle | LLM对战页面，提供与大语言模型的对战功能 |
-| /human-vs-ai | 现有人机对战页面（保持不变） |
-| /pvp | 现有双人对战页面（保持不变） |
-| /settings | 设置页面，包含LLM配置和游戏参数设置 |
+| 路由           | 用途                    |
+| ------------ | --------------------- |
+| /home        | 游戏主页，显示所有游戏模式选择       |
+| /ai-battle   | LLM对战页面，提供与大语言模型的对战功能 |
+| /human-vs-ai | 现有人机对战页面（保持不变）        |
+| /pvp         | 现有双人对战页面（保持不变）        |
+| /settings    | 设置页面，包含LLM配置和游戏参数设置   |
 
 ## 4. API定义
 
@@ -61,23 +64,26 @@ POST /api/llm/move
 ```
 
 请求参数：
-| 参数名称 | 参数类型 | 是否必需 | 描述 |
-|----------|----------|----------|------|
-| board | number[][] | true | 当前棋盘状态，15x15二维数组 |
-| lastMove | Move | true | 上一步棋的位置信息 |
-| model | string | true | 使用的LLM模型名称 |
-| difficulty | string | false | 难度级别：easy/medium/hard |
+
+| 参数名称       | 参数类型         | 是否必需  | 描述                    |
+| ---------- | ------------ | ----- | --------------------- |
+| board      | number\[]\[] | true  | 当前棋盘状态，15x15二维数组      |
+| lastMove   | Move         | true  | 上一步棋的位置信息             |
+| model      | string       | true  | 使用的LLM模型名称            |
+| difficulty | string       | false | 难度级别：easy/medium/hard |
 
 响应参数：
-| 参数名称 | 参数类型 | 描述 |
-|----------|----------|------|
-| success | boolean | 请求是否成功 |
-| move | LLMMove | LLM选择的下棋位置 |
-| reasoning | string | LLM的思考过程（可选） |
-| gameStatus | string | 游戏状态 |
-| error | string | 错误信息（如果有） |
+
+| 参数名称       | 参数类型    | 描述           |
+| ---------- | ------- | ------------ |
+| success    | boolean | 请求是否成功       |
+| move       | LLMMove | LLM选择的下棋位置   |
+| reasoning  | string  | LLM的思考过程（可选） |
+| gameStatus | string  | 游戏状态         |
+| error      | string  | 错误信息（如果有）    |
 
 请求示例：
+
 ```json
 {
   "board": [[0,0,0,...], [0,1,0,...], ...],
@@ -88,6 +94,7 @@ POST /api/llm/move
 ```
 
 响应示例：
+
 ```json
 {
   "success": true,
@@ -108,9 +115,10 @@ GET /api/llm/models
 获取可用的LLM模型列表
 
 响应参数：
-| 参数名称 | 参数类型 | 描述 |
-|----------|----------|------|
-| models | LLMModel[] | 可用模型列表 |
+
+| 参数名称   | 参数类型        | 描述     |
+| ------ | ----------- | ------ |
+| models | LLMModel\[] | 可用模型列表 |
 
 ```
 POST /api/llm/config
@@ -119,12 +127,13 @@ POST /api/llm/config
 配置LLM模型参数
 
 请求参数：
-| 参数名称 | 参数类型 | 是否必需 | 描述 |
-|----------|----------|----------|------|
-| model | string | true | 模型名称 |
-| apiKey | string | false | API密钥（加密存储） |
-| endpoint | string | false | 自定义API端点 |
-| parameters | object | false | 模型特定参数 |
+
+| 参数名称       | 参数类型   | 是否必需  | 描述          |
+| ---------- | ------ | ----- | ----------- |
+| model      | string | true  | 模型名称        |
+| apiKey     | string | false | API密钥（加密存储） |
+| endpoint   | string | false | 自定义API端点    |
+| parameters | object | false | 模型特定参数      |
 
 ## 5. 服务器架构图
 
@@ -225,6 +234,7 @@ erDiagram
 由于本项目采用内存存储方案，以下为主要数据结构的Go语言定义：
 
 LLM游戏状态表 (LLMGame)
+
 ```go
 // LLMGame represents a game session with LLM
 type LLMGame struct {
@@ -278,6 +288,7 @@ type LLMAdapter interface {
 ```
 
 初始化数据
+
 ```go
 // 预定义可用的LLM模型
 var DefaultLLMModels = []LLMModel{
@@ -330,3 +341,4 @@ var DefaultLLMConfigs = map[string]LLMConfig{
     },
 }
 ```
+

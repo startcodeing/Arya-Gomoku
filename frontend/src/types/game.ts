@@ -75,62 +75,66 @@ export enum LLMGameStatus {
 
 // LLM移动信息
 export interface LLMMove {
+  id: string
+  gameId: string
   x: number
   y: number
   player: number
   reasoning: string
   confidence: number
   timestamp: string
-  game_id: string
 }
 
 // LLM游戏信息
 export interface LLMGame {
-  game_id: string
-  model_name: string
-  status: LLMGameStatus
+  id: string
+  modelName: string
+  difficulty: string
+  status: string
+  currentPlayer: number
   board: number[][]
-  moves: Move[]
-  start_time: string
-  end_time?: string
+  moves: LLMMove[]
+  createdAt: string
+  updatedAt: string
 }
 
 // LLM模型信息
 export interface LLMModel {
   name: string
-  display_name: string
+  displayName: string
   provider: string
-  requires_api_key: boolean
-  default_params: Record<string, any>
-  status: 'available' | 'not_configured' | 'unavailable'
+  requiresApiKey: boolean
+  defaultParams: Record<string, any>
+  status: 'available' | 'unavailable' | 'error'
 }
 
 // LLM配置
 export interface LLMConfig {
-  model_name: string
-  api_key: string
+  modelName: string
+  apiKey: string
   endpoint: string
   parameters: Record<string, any>
+  enabled: boolean
 }
 
 // LLM配置请求
 export interface LLMConfigRequest {
-  api_key: string
+  model: string
+  apiKey?: string
   endpoint?: string
   parameters?: Record<string, any>
 }
 
 // LLM配置响应
 export interface LLMConfigResponse {
-  model_name: string
-  endpoint: string
-  parameters: Record<string, any>
-  has_api_key: boolean
+  success: boolean
+  message?: string
+  error?: string
 }
 
 // LLM移动请求
 export interface LLMMoveRequest {
-  game_id: string
+  gameId: string
   move: {
     x: number
     y: number
@@ -139,39 +143,42 @@ export interface LLMMoveRequest {
 
 // LLM移动响应
 export interface LLMMoveResponse {
+  success: boolean
   move?: LLMMove
-  game_status: LLMGameStatus
-  message: string
+  reasoning?: string
+  gameStatus: string
+  error?: string
 }
 
 // LLM开始游戏请求
 export interface LLMStartGameRequest {
-  model_name: string
+  modelName: string
+  difficulty?: string
 }
 
 // LLM游戏历史响应
 export interface LLMGameHistoryResponse {
-  game_id: string
-  moves: Move[]
+  gameId: string
+  moves: LLMMove[]
   total: number
-  status: LLMGameStatus
-  model_name: string
+  status: string
+  modelName: string
 }
 
 // LLM统计信息
 export interface LLMStats {
-  total_games: number
-  active_games: number
-  human_wins: number
-  ai_wins: number
+  totalGames: number
+  activeGames: number
+  humanWins: number
+  aiWins: number
   draws: number
-  popular_model: string
+  popularModel: string
 }
 
 // LLM健康检查响应
 export interface LLMHealthResponse {
   status: string
-  available_models: number
-  configured_models: number
+  availableModels: number
+  configuredModels: number
   timestamp: Record<string, any>
 }

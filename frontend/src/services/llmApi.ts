@@ -19,23 +19,27 @@ import type {
 
 export const llmApi = {
   // 开始新的LLM游戏
-  async startGame(modelName: string): Promise<ApiResponse<LLMGame>> {
-    const request: LLMStartGameRequest = {
-      model_name: modelName
+  async startGame(params: { modelId: string; config: any }): Promise<{ gameId: string }> {
+    const request = {
+      model_name: params.modelId
     }
     
     const response = await api.post('/llm/start', request)
-    return response.data
+    return {
+      gameId: response.data.data.id
+    }
   },
 
   // 进行移动
-  async makeMove(gameId: string, x: number, y: number): Promise<ApiResponse<LLMMoveResponse>> {
-    const request: LLMMoveRequest = {
+  async makeMove(gameId: string, move: { x: number; y: number }): Promise<any> {
+    const request = {
       game_id: gameId,
-      move: { x, y }
+      move: move
     }
     
+    console.log('发送LLM移动请求:', request)
     const response = await api.post('/llm/move', request)
+    console.log('收到LLM移动响应:', response.data)
     return response.data
   },
 
@@ -59,9 +63,18 @@ export const llmApi = {
   },
 
   // 获取可用模型列表
-  async getModels(): Promise<ApiResponse<LLMModel[]>> {
+  async getModels(): Promise<{ models: LLMModel[] }> {
     const response = await api.get('/llm/models')
-    return response.data
+    // 适配后端返回的数据结构
+    return {
+      models: response.data.data.map((model: any) => ({
+        id: model.name,
+        name: model.displayName,
+        provider: model.provider,
+        description: `${model.provider} 模型`,
+        status: model.status
+      }))
+    }
   },
 
   // 更新模型配置
