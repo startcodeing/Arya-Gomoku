@@ -3,14 +3,24 @@
     <!-- 页面头部 -->
     <div class="page-header">
       <div class="header-content">
-        <div class="header-text">
-          <h1>双人对战大厅</h1>
-          <p>创建房间或加入现有房间，与朋友一起享受五子棋对战的乐趣</p>
+        <div class="header-left">
+          <button @click="goToHome" class="back-button">
+            <span class="back-icon">←</span>
+            返回首页
+          </button>
         </div>
-        <button class="refresh-button" @click="refresh" :disabled="isLoading">
-          <span class="refresh-icon">🔄</span>
-          {{ isLoading ? '刷新中...' : '刷新房间' }}
-        </button>
+        <div class="header-center">
+          <div class="header-text">
+            <h1>双人对战大厅</h1>
+            <p>创建房间或加入现有房间，与朋友一起享受五子棋对战的乐趣</p>
+          </div>
+        </div>
+        <div class="header-right">
+          <button class="refresh-button" @click="refresh" :disabled="isLoading">
+            <span class="refresh-icon">🔄</span>
+            {{ isLoading ? '刷新中...' : '刷新房间' }}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -227,6 +237,10 @@ async function refresh() {
   await pvpStore.fetchRooms()
 }
 
+function goToHome() {
+  router.push('/')
+}
+
 async function createRoom() {
   if (!canCreate.value) return
   const payload = {
@@ -288,9 +302,19 @@ onMounted(() => {
   max-width: 1200px;
   margin: 0 auto;
   padding: 0 30px;
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 1fr 2fr 1fr;
+  gap: 30px;
   align-items: center;
+}
+
+.header-left, .header-center, .header-right {
+  display: flex;
+  align-items: center;
+}
+
+.header-center {
+  justify-content: center;
 }
 
 .header-text h1 {
@@ -336,6 +360,32 @@ onMounted(() => {
 }
 
 .refresh-icon {
+  font-size: 1.1rem;
+}
+
+.back-button {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  padding: 12px 20px;
+  border-radius: 25px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 1rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  backdrop-filter: blur(10px);
+}
+
+.back-button:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: translateX(-5px);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
+}
+
+.back-icon {
   font-size: 1.1rem;
 }
 
@@ -818,9 +868,13 @@ onMounted(() => {
   }
 
   .header-content {
-    flex-direction: column;
+    grid-template-columns: 1fr;
     gap: 20px;
     text-align: center;
+  }
+
+  .header-left, .header-center, .header-right {
+    justify-content: center;
   }
 
   .header-text p {
