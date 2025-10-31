@@ -37,9 +37,14 @@ api.interceptors.response.use(
 // AI相关API
 export const aiApi = {
   // 获取AI移动
-  async getMove(request: AIRequest): Promise<AIResponse> {
+  async getMove(request: AIRequest, difficulty: 'easy' | 'medium' | 'hard' | 'expert' = 'medium', useEnhanced: boolean = true): Promise<AIResponse> {
     try {
-      const response = await api.post<AIResponse>('/ai/move', request)
+      const params = new URLSearchParams({
+        difficulty: difficulty,
+        enhanced: useEnhanced.toString()
+      })
+
+      const response = await api.post<AIResponse>(`/ai/move?${params}`, request)
       return response.data
     } catch (error: any) {
       console.error('获取AI移动失败:', error)
@@ -66,6 +71,53 @@ export const aiApi = {
     } catch (error: any) {
       console.error('重置游戏失败:', error)
       throw new Error(error.response?.data?.error || '重置游戏失败')
+    }
+  },
+
+  // 获取AI性能统计
+  async getStats(): Promise<ApiResponse> {
+    try {
+      const response = await api.get('/ai/stats')
+      return response.data
+    } catch (error: any) {
+      console.error('获取AI统计失败:', error)
+      throw new Error(error.response?.data?.error || '获取AI统计失败')
+    }
+  },
+
+  // 清除AI缓存
+  async clearCache(): Promise<ApiResponse> {
+    try {
+      const response = await api.post('/ai/cache/clear')
+      return response.data
+    } catch (error: any) {
+      console.error('清除AI缓存失败:', error)
+      throw new Error(error.response?.data?.error || '清除AI缓存失败')
+    }
+  },
+
+  // 获取难度等级
+  async getDifficultyLevels(): Promise<ApiResponse> {
+    try {
+      const response = await api.get('/ai/difficulties')
+      return response.data
+    } catch (error: any) {
+      console.error('获取难度等级失败:', error)
+      throw new Error(error.response?.data?.error || '获取难度等级失败')
+    }
+  },
+
+  // AI性能基准测试
+  async benchmarkAI(difficulty: string = 'medium', moveCount: number = 10): Promise<ApiResponse> {
+    try {
+      const response = await api.post('/ai/benchmark', {
+        difficulty,
+        moveCount
+      })
+      return response.data
+    } catch (error: any) {
+      console.error('AI基准测试失败:', error)
+      throw new Error(error.response?.data?.error || 'AI基准测试失败')
     }
   }
 }

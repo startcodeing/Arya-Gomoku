@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Home from '../components/Home.vue'
+import AIGame from '../components/AIGame.vue'
 import RoomList from '../components/RoomList.vue'
 import RoomLobby from '../components/RoomLobby.vue'
 import PVPGame from '../components/PVPGame.vue'
@@ -12,6 +13,11 @@ const routes = [
     path: '/',
     name: 'Home',
     component: Home
+  },
+  {
+    path: '/ai-game',
+    name: 'AIGame',
+    component: AIGame
   },
   {
     path: '/pvp',

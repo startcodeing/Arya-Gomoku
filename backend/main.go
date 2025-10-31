@@ -43,6 +43,10 @@ func main() {
 		api.POST("/ai/move", aiController.GetAIMove)
 		api.GET("/ai/status", aiController.GetGameStatus)
 		api.POST("/ai/reset", aiController.ResetGame)
+		api.GET("/ai/stats", aiController.GetAIStats)
+		api.POST("/ai/cache/clear", aiController.ClearCache)
+		api.GET("/ai/difficulties", aiController.GetDifficultyLevels)
+		api.POST("/ai/benchmark", aiController.BenchmarkAI)
 
 		// LLM endpoints
 		api.POST("/llm/start", llmController.StartGame)

@@ -5,6 +5,7 @@ package controller
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -14,13 +15,15 @@ import (
 
 // AIController handles AI-related HTTP requests
 type AIController struct {
-	aiService *service.AIService
+	aiService         *service.AIService
+	enhancedAIService *service.EnhancedAIService
 }
 
 // NewAIController creates a new AI controller instance
 func NewAIController() *AIController {
 	return &AIController{
-		aiService: service.NewAIService(),
+		aiService:         service.NewAIService(),
+		enhancedAIService: service.NewEnhancedAIService(),
 	}
 }
 
@@ -28,7 +31,7 @@ func NewAIController() *AIController {
 // This endpoint receives the current board state and returns the AI's next move
 func (ac *AIController) GetAIMove(c *gin.Context) {
 	var request model.GameRequest
-	
+
 	// Parse JSON request body
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -37,7 +40,25 @@ func (ac *AIController) GetAIMove(c *gin.Context) {
 		})
 		return
 	}
-	
+
+	// Get difficulty level from query parameter (default: Medium)
+	difficultyStr := c.DefaultQuery("difficulty", "medium")
+	useEnhanced := c.DefaultQuery("enhanced", "true") == "true"
+
+	var difficulty service.Difficulty
+	switch difficultyStr {
+	case "easy":
+		difficulty = service.Easy
+	case "medium":
+		difficulty = service.Medium
+	case "hard":
+		difficulty = service.Hard
+	case "expert":
+		difficulty = service.Expert
+	default:
+		difficulty = service.Medium
+	}
+
 	// Validate board dimensions
 	if len(request.Board) != 15 {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -45,16 +66,16 @@ func (ac *AIController) GetAIMove(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	for i, row := range request.Board {
 		if len(row) != 15 {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Board row " + string(rune(i)) + " must have 15 columns",
+				"error": "Board row " + string(rune(i+1)) + " must have 15 columns",
 			})
 			return
 		}
 	}
-	
+
 	// Validate player
 	if request.Player != 1 && request.Player != 2 {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -62,18 +83,31 @@ func (ac *AIController) GetAIMove(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// Validate last move coordinates
-	if request.LastMove.X < 0 || request.LastMove.X >= 15 || 
+	if request.LastMove.X < 0 || request.LastMove.X >= 15 ||
 	   request.LastMove.Y < 0 || request.LastMove.Y >= 15 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "Last move coordinates must be within 0-14 range",
 		})
 		return
 	}
-	
-	// Get AI move
-	aiMove := ac.aiService.GetAIMove(request.Board, request.LastMove)
+
+	// Additional board state validation
+	if err := ac.validateBoardState(request.Board); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	// Get AI move using enhanced or regular AI
+	var aiMove model.AIMove
+	if useEnhanced {
+		aiMove = ac.enhancedAIService.GetAIMove(request.Board, request.LastMove, difficulty)
+	} else {
+		aiMove = ac.aiService.GetAIMove(request.Board, request.LastMove)
+	}
 	
 	// Create a temporary board to check game state after AI move
 	tempBoard := make([][]int, 15)
@@ -103,8 +137,21 @@ func (ac *AIController) GetAIMove(c *gin.Context) {
 		GameStatus: gameState.Status,
 		Winner:     gameState.Winner,
 	}
-	
-	c.JSON(http.StatusOK, response)
+
+	// Add enhanced AI stats if using enhanced AI
+	if useEnhanced {
+		stats := ac.enhancedAIService.GetStats()
+		c.JSON(http.StatusOK, gin.H{
+			"aiMove":       response.AIMove,
+			"gameStatus":   response.GameStatus,
+			"winner":       response.Winner,
+			"difficulty":   difficultyStr,
+			"aiEngine":     "enhanced_minimax",
+			"stats":        stats,
+		})
+	} else {
+		c.JSON(http.StatusOK, response)
+	}
 }
 
 // GetGameStatus handles GET /api/game/status requests (reserved for future use)
@@ -128,6 +175,150 @@ func (ac *AIController) ResetGame(c *gin.Context) {
 	})
 }
 
+// GetAIStats handles GET /api/ai/stats requests
+// Returns performance statistics of the enhanced AI
+func (ac *AIController) GetAIStats(c *gin.Context) {
+	stats := ac.enhancedAIService.GetStats()
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"stats":  stats,
+	})
+}
+
+// ClearCache handles POST /api/ai/cache/clear requests
+// Clears the transposition table
+func (ac *AIController) ClearCache(c *gin.Context) {
+	ac.enhancedAIService.ClearTranspositionTable()
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Transposition table cleared successfully",
+	})
+}
+
+// GetDifficultyLevels handles GET /api/ai/difficulties requests
+// Returns available difficulty levels
+func (ac *AIController) GetDifficultyLevels(c *gin.Context) {
+	difficulties := []map[string]interface{}{
+		{
+			"level":        "easy",
+			"description":  "Simple heuristic moves, quick response",
+			"maxDepth":     2,
+			"estimatedTime": "< 100ms",
+		},
+		{
+			"level":        "medium",
+			"description":  "Balanced gameplay with moderate analysis",
+			"maxDepth":     4,
+			"estimatedTime": "100-500ms",
+		},
+		{
+			"level":        "hard",
+			"description":  "Deep analysis with strong play",
+			"maxDepth":     6,
+			"estimatedTime": "500ms-2s",
+		},
+		{
+			"level":        "expert",
+			"description":  "Maximum depth analysis with time limit",
+			"maxDepth":     8,
+			"estimatedTime": "2-5s",
+		},
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":       "success",
+		"difficulties": difficulties,
+	})
+}
+
+// BenchmarkAI handles POST /api/ai/benchmark requests
+// Runs a benchmark of the AI performance
+func (ac *AIController) BenchmarkAI(c *gin.Context) {
+	type BenchmarkRequest struct {
+		Difficulty string `json:"difficulty"`
+		MoveCount  int    `json:"moveCount"`
+	}
+
+	var req BenchmarkRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid request format",
+		})
+		return
+	}
+
+	// Set defaults
+	if req.Difficulty == "" {
+		req.Difficulty = "medium"
+	}
+	if req.MoveCount == 0 {
+		req.MoveCount = 10
+	}
+
+	var difficulty service.Difficulty
+	switch req.Difficulty {
+	case "easy":
+		difficulty = service.Easy
+	case "medium":
+		difficulty = service.Medium
+	case "hard":
+		difficulty = service.Hard
+	case "expert":
+		difficulty = service.Expert
+	default:
+		difficulty = service.Medium
+	}
+
+	// Create test board
+	board := make([][]int, 15)
+	for i := range board {
+		board[i] = make([]int, 15)
+	}
+
+	// Simulate some moves
+	board[7][7] = 1 // Human center
+	board[7][8] = 2 // AI response
+	lastMove := model.Move{X: 7, Y: 8}
+
+	// Run benchmark
+	startTime := time.Now()
+	totalNodes := uint64(0)
+	totalCutoffs := uint64(0)
+
+	for i := 0; i < req.MoveCount; i++ {
+		aiMove := ac.enhancedAIService.GetAIMove(board, lastMove, difficulty)
+		stats := ac.enhancedAIService.GetStats()
+
+		totalNodes += stats["nodes_searched"].(uint64)
+		totalCutoffs += stats["cutoffs"].(uint64)
+
+		// Apply move to continue game
+		board[aiMove.Y][aiMove.X] = 2
+		lastMove = model.Move{X: aiMove.X, Y: aiMove.Y}
+
+		// Simulate human response (random valid move)
+		if i < req.MoveCount-1 {
+			board[6][6+i] = 1
+			lastMove = model.Move{X: 6 + i, Y: 6}
+		}
+	}
+
+	duration := time.Since(startTime)
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":       "success",
+		"difficulty":   req.Difficulty,
+		"moveCount":    req.MoveCount,
+		"totalTime":    duration.String(),
+		"avgTime":      (duration / time.Duration(req.MoveCount)).String(),
+		"totalNodes":   totalNodes,
+		"totalCutoffs": totalCutoffs,
+		"nodesPerMs":   float64(totalNodes) / float64(duration.Milliseconds()),
+	})
+}
+
 // countMoves counts the total number of pieces on the board
 func (ac *AIController) countMoves(board [][]int) int {
 	count := 0
@@ -145,7 +336,7 @@ func (ac *AIController) countMoves(board [][]int) int {
 func (ac *AIController) validateBoardState(board [][]int) error {
 	playerCount := 0
 	aiCount := 0
-	
+
 	for _, row := range board {
 		for _, cell := range row {
 			switch cell {
@@ -160,11 +351,11 @@ func (ac *AIController) validateBoardState(board [][]int) error {
 			}
 		}
 	}
-	
+
 	// Check if move counts are reasonable (AI should not have more pieces than player + 1)
 	if aiCount > playerCount || playerCount > aiCount+1 {
 		return errors.New("Invalid board state: unrealistic piece distribution")
 	}
-	
+
 	return nil
 }
