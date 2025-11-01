@@ -12,7 +12,7 @@ type Room struct {
 	Status      string    `json:"status"` // waiting, playing, finished
 	MaxPlayers  int       `json:"maxPlayers"`
 	Players     []*PVPPlayer `json:"players"`
-	Game        *PVPGame  `json:"game,omitempty"`
+	Game        *PVPGameSession  `json:"game,omitempty"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 	CreatorID   string    `json:"creatorId"`
@@ -30,18 +30,18 @@ type PVPPlayer struct {
 	IsCreator    bool      `json:"isCreator"`
 }
 
-// PVPGame represents a PVP game instance
-type PVPGame struct {
+// PVPGameSession represents a PVP game session
+type PVPGameSession struct {
 	ID            string     `json:"id"`
-	RoomID        string     `json:"roomId"`
-	Status        string     `json:"status"` // playing, finished
+	RoomID        string     `json:"room_id"`
+	Status        string     `json:"status"`
 	Board         [][]int    `json:"board"`
-	CurrentPlayer string     `json:"currentPlayer"` // Player ID of current player
-	Winner        string     `json:"winner"`        // Player ID of winner
-	MoveCount     int        `json:"moveCount"`
+	CurrentPlayer string     `json:"current_player"`
+	Winner        string     `json:"winner"`
+	MoveCount     int        `json:"move_count"`
 	Moves         []*PVPMove `json:"moves"`
-	StartedAt     time.Time  `json:"startedAt"`
-	EndedAt       *time.Time `json:"endedAt,omitempty"`
+	StartedAt     time.Time  `json:"started_at"`
+	EndedAt       *time.Time `json:"ended_at,omitempty"`
 }
 
 // PVPMove represents a move in PVP game
@@ -69,7 +69,7 @@ type RoomUpdateData struct {
 
 // GameUpdateData represents game update message data
 type GameUpdateData struct {
-	Game     *PVPGame `json:"game"`
+	Game     *PVPGameSession `json:"game"`
 	LastMove *PVPMove `json:"lastMove,omitempty"`
 }
 
@@ -132,8 +132,8 @@ func NewRoom(name, creatorName string, maxPlayers int) *Room {
 	}
 }
 
-// NewPVPGame creates a new PVP game
-func NewPVPGame(room *Room) *PVPGame {
+// NewPVPGameSession creates a new PVP game
+func NewPVPGameSession(room *Room) *PVPGameSession {
 	gameID := uuid.New().String()
 	
 	// Initialize 15x15 board
@@ -154,7 +154,7 @@ func NewPVPGame(room *Room) *PVPGame {
 		}
 	}
 	
-	return &PVPGame{
+	return &PVPGameSession{
 		ID:            gameID,
 		RoomID:        room.ID,
 		Status:        "playing",
@@ -231,7 +231,7 @@ func (r *Room) CanStartGame() bool {
 }
 
 // IsValidMove checks if a move is valid
-func (g *PVPGame) IsValidMove(x, y int) bool {
+func (g *PVPGameSession) IsValidMove(x, y int) bool {
 	if x < 0 || x >= 15 || y < 0 || y >= 15 {
 		return false
 	}
@@ -239,7 +239,7 @@ func (g *PVPGame) IsValidMove(x, y int) bool {
 }
 
 // MakeMove makes a move in the game
-func (g *PVPGame) MakeMove(x, y int, playerID string, playerNumber int, room *Room) *PVPMove {
+func (g *PVPGameSession) MakeMove(x, y int, playerID string, playerNumber int, room *Room) *PVPMove {
 	if !g.IsValidMove(x, y) || g.CurrentPlayer != playerID {
 		return nil
 	}
@@ -283,7 +283,7 @@ func (g *PVPGame) MakeMove(x, y int, playerID string, playerNumber int, room *Ro
 }
 
 // CheckWin checks if the specified player has won
-func (g *PVPGame) CheckWin(x, y, player int) bool {
+func (g *PVPGameSession) CheckWin(x, y, player int) bool {
 	directions := [][]int{
 		{1, 0},   // Horizontal
 		{0, 1},   // Vertical
@@ -321,6 +321,6 @@ func (g *PVPGame) CheckWin(x, y, player int) bool {
 }
 
 // IsBoardFull checks if the board is full
-func (g *PVPGame) IsBoardFull() bool {
+func (g *PVPGameSession) IsBoardFull() bool {
 	return g.MoveCount >= 15*15
 }

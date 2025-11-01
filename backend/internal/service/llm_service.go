@@ -15,7 +15,7 @@ import (
 // LLMService manages LLM games and model interactions
 type LLMService struct {
 	adapters map[string]LLMAdapter
-	games    map[string]*model.LLMGame
+	games    map[string]*model.LLMGameSession
 	configs  map[string]model.LLMConfig
 	cache    CacheInterface
 	mutex    sync.RWMutex
@@ -33,7 +33,7 @@ func NewLLMService() *LLMService {
 
 	service := &LLMService{
 		adapters: make(map[string]LLMAdapter),
-		games:    make(map[string]*model.LLMGame),
+		games:    make(map[string]*model.LLMGameSession),
 		configs:  make(map[string]model.LLMConfig),
 		cache:    cache,
 	}
@@ -57,42 +57,38 @@ func (s *LLMService) registerAdapters() {
 // setDefaultConfigs sets default configurations for each model
 func (s *LLMService) setDefaultConfigs() {
 	// DeepSeek default config
+	baseURL := "https://api.deepseek.com"
 	s.configs["deepseek"] = model.LLMConfig{
-		ModelName: "deepseek",
-		APIKey:    "sk-005336ebfe3c491b925765238fc39f4f", // To be set by user
-		Endpoint:  "https://api.deepseek.com/v1/chat/completions",
-		Parameters: map[string]interface{}{
-			"temperature": 0.7,
-			"max_tokens":  1000,
-		},
+		Name:     "deepseek",
+		Provider: "deepseek",
+		Model:    "deepseek-chat",
+		APIKey:   "sk-005336ebfe3c491b925765238fc39f4f", // To be set by user
+		BaseURL:  &baseURL,
 	}
 
 	// ChatGPT default config
+	openaiURL := "https://api.openai.com"
 	s.configs["chatgpt"] = model.LLMConfig{
-		ModelName: "chatgpt",
-		APIKey:    "", // To be set by user
-		Endpoint:  "https://api.openai.com/v1/chat/completions",
-		Parameters: map[string]interface{}{
-			"model":       "gpt-3.5-turbo",
-			"temperature": 0.7,
-			"max_tokens":  1000,
-		},
+		Name:     "chatgpt",
+		Provider: "openai",
+		Model:    "gpt-3.5-turbo",
+		APIKey:   "", // To be set by user
+		BaseURL:  &openaiURL,
 	}
 
 	// Ollama default config
+	ollamaURL := "http://localhost:11434"
 	s.configs["ollama"] = model.LLMConfig{
-		ModelName: "ollama",
-		APIKey:    "", // Not required for Ollama
-		Endpoint:  "http://localhost:11434/api/generate",
-		Parameters: map[string]interface{}{
-			"model":       "llama2",
-			"temperature": 0.7,
-		},
+		Name:     "ollama",
+		Provider: "ollama",
+		Model:    "llama2",
+		APIKey:   "", // Not required for Ollama
+		BaseURL:  &ollamaURL,
 	}
 }
 
 // StartGame creates a new LLM game
-func (s *LLMService) StartGame(modelName string) (*model.LLMGame, error) {
+func (s *LLMService) StartGame(modelName string) (*model.LLMGameSession, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -114,7 +110,7 @@ func (s *LLMService) StartGame(modelName string) (*model.LLMGame, error) {
 	}
 
 	// Create new game
-	game := model.NewLLMGame(modelName, "medium")
+	game := model.NewLLMGameSession(modelName, "medium")
 	s.games[game.ID] = game
 
 	return game, nil
@@ -259,7 +255,7 @@ func (s *LLMService) MakeMove(gameID string, humanMove model.Move) (*model.LLMRe
 }
 
 // GetGame retrieves a game by ID
-func (s *LLMService) GetGame(gameID string) (*model.LLMGame, error) {
+func (s *LLMService) GetGame(gameID string) (*model.LLMGameSession, error) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
@@ -312,7 +308,6 @@ func (s *LLMService) UpdateConfig(modelName string, config model.LLMConfig) erro
 	}
 
 	// Update configuration
-	config.ModelName = modelName
 	s.configs[modelName] = config
 
 	return nil

@@ -19,10 +19,24 @@
           </span>
         </div>
       </div>
-      
-      <div class="connection-status" :class="connectionStatus">
-        <span class="status-dot"></span>
-        {{ getConnectionStatusText() }}
+
+      <div class="header-right">
+        <div class="user-status">
+          <div v-if="userStore.isAuthenticated" class="logged-in-user">
+            <span class="user-icon">👤</span>
+            <span class="username">{{ userStore.user?.username }}</span>
+            <span class="save-indicator" title="游戏记录将自动保存">💾</span>
+          </div>
+          <div v-else class="guest-user">
+            <span class="guest-icon">👤</span>
+            <span class="guest-text">游客模式</span>
+          </div>
+        </div>
+        
+        <div class="connection-status" :class="connectionStatus">
+          <span class="status-dot"></span>
+          {{ getConnectionStatusText() }}
+        </div>
       </div>
     </div>
 
@@ -301,6 +315,8 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { usePvpStore } from '../stores/pvp'
+import { useUserStore } from '../stores/user'
+import { gameApi } from '../services/api'
 import type { Player as PVPPlayer, Room, GameResult, Move } from '../types/pvp'
 import { BOARD_SIZE, PLAYER_COLORS } from '../types/pvp'
 import { Player } from '../types/game'
@@ -309,6 +325,7 @@ import Board from './Board.vue'
 const route = useRoute()
 const router = useRouter()
 const pvpStore = usePvpStore()
+const userStore = useUserStore()
 
 // 响应式数据
 const newMessage = ref('')
@@ -570,13 +587,45 @@ function stopGameTimer() {
   }
 }
 
+async function savePVPGameRecord(result: GameResult) {
+  if (!userStore.isAuthenticated || !currentPlayer.value) return
+
+  try {
+    const gameRecord = {
+      gameType: 'pvp' as const,
+      opponentName: getOpponentName(),
+      result: getGameResult(result),
+      moves: result.moves.map(move => ({ x: move.x, y: move.y })),
+      moveCount: result.moves.length,
+      duration: result.duration
+    }
+
+    await gameApi.saveGameRecord(gameRecord)
+  } catch (error) {
+    console.error('保存PVP游戏记录失败:', error)
+    throw error
+  }
+}
+
+function getOpponentName(): string {
+  if (!room.value?.players || !currentPlayer.value) return '未知对手'
+  
+  const opponent = room.value.players.find(p => p.id !== currentPlayer.value?.id)
+  return opponent?.name || '未知对手'
+}
+
+function getGameResult(result: GameResult): 'win' | 'lose' | 'draw' {
+  if (!result.winner) return 'draw'
+  return result.winner === currentPlayer.value?.id ? 'win' : 'lose'
+}
+
 // 监听聊天消息变化
 watch(chatMessages, () => {
   scrollChatToBottom()
 }, { deep: true })
 
 // 监听游戏状态变化
-watch(() => game.value?.status, (newStatus, oldStatus) => {
+watch(() => game.value?.status, async (newStatus, oldStatus) => {
   if (newStatus === 'playing' && oldStatus !== 'playing') {
     startGameTimer()
     showSuccess('游戏开始了！')
@@ -594,6 +643,17 @@ watch(() => game.value?.status, (newStatus, oldStatus) => {
         duration: gameStartTime.value ? 
           Math.floor((new Date().getTime() - gameStartTime.value.getTime()) / 1000) : 0
       }
+      
+      // 如果用户已登录，保存游戏记录
+      if (userStore.isAuthenticated) {
+        try {
+          await savePVPGameRecord(gameResult.value)
+        } catch (error) {
+          console.error('保存PVP游戏记录失败:', error)
+          // 不显示错误给用户，避免影响游戏体验
+        }
+      }
+      
       showGameResult.value = true
     }
   }
@@ -695,6 +755,53 @@ onUnmounted(() => {
   align-items: center;
   margin-bottom: 30px;
   color: white;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.user-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.logged-in-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 8px 12px;
+  border-radius: 8px;
+  backdrop-filter: blur(10px);
+}
+
+.user-icon, .guest-icon {
+  font-size: 1.2rem;
+}
+
+.username {
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.save-indicator {
+  font-size: 1rem;
+  opacity: 0.8;
+}
+
+.guest-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.guest-text {
+  font-size: 0.9rem;
+  opacity: 0.8;
 }
 
 .back-button {

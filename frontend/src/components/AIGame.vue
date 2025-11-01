@@ -16,6 +16,19 @@
           </span>
         </div>
       </div>
+
+      <div class="user-status">
+        <div v-if="userStore.isAuthenticated" class="logged-in-user">
+          <span class="user-icon">👤</span>
+          <span class="username">{{ userStore.user?.username }}</span>
+          <span class="save-indicator" title="游戏记录将自动保存">💾</span>
+        </div>
+        <div v-else class="guest-user">
+          <span class="guest-icon">👤</span>
+          <span class="guest-text">游客模式</span>
+          <button @click="goToLogin" class="login-prompt">登录保存记录</button>
+        </div>
+      </div>
     </div>
 
     <!-- 难度选择区域 -->
@@ -289,7 +302,8 @@ import { useRouter } from 'vue-router'
 import Board from './Board.vue'
 import ControlPanel from './ControlPanel.vue'
 import { Player, GameStatus, type Position, type BoardState } from '../types/game'
-import { aiApi } from '../services/api'
+import { aiApi, gameApi } from '../services/api'
+import { useUserStore } from '../stores/user'
 import {
   createInitialGameState,
   makeMove,
@@ -298,6 +312,7 @@ import {
 } from '../utils/gameLogic'
 
 const router = useRouter()
+const userStore = useUserStore()
 
 // 响应式数据
 const isGameActive = ref(false)
@@ -385,6 +400,10 @@ function startNewGame() {
 
 function backToHome() {
   router.push('/')
+}
+
+function goToLogin() {
+  router.push('/login')
 }
 
 function backToDifficulty() {
@@ -545,7 +564,7 @@ function isValidAIMove(x: number, y: number): boolean {
          gameState.board[y][x] === Player.NONE
 }
 
-function handleGameEnd() {
+async function handleGameEnd() {
   // 更新总统计数据
   statistics.totalGames++
 
@@ -555,10 +574,11 @@ function handleGameEnd() {
     statistics.difficultyStats[difficulty].totalGames = (statistics.difficultyStats[difficulty].totalGames || 0) + 1
   }
 
+  let winner: Player = Player.NONE
   switch (gameState.gameStatus) {
     case GameStatus.HUMAN_WIN:
       statistics.humanWins++
-      gameState.winner = Player.HUMAN
+      winner = Player.HUMAN
 
       if (selectedDifficulty.value) {
         const difficulty = selectedDifficulty.value as keyof typeof statistics.difficultyStats
@@ -567,7 +587,7 @@ function handleGameEnd() {
       break
     case GameStatus.AI_WIN:
       statistics.aiWins++
-      gameState.winner = Player.AI
+      winner = Player.AI
 
       if (selectedDifficulty.value) {
         const difficulty = selectedDifficulty.value as keyof typeof statistics.difficultyStats
@@ -584,10 +604,42 @@ function handleGameEnd() {
       break
   }
 
+  gameState.winner = winner
+
+  // 如果用户已登录，保存游戏记录
+  if (userStore.isAuthenticated) {
+    try {
+      await saveGameRecord(winner)
+    } catch (error) {
+      console.error('保存游戏记录失败:', error)
+      // 不显示错误给用户，避免影响游戏体验
+    }
+  }
+
   // 显示结果
   setTimeout(() => {
     showGameResult.value = true
   }, 1000)
+}
+
+async function saveGameRecord(winner: Player) {
+  if (!userStore.isAuthenticated || !selectedDifficulty.value) return
+
+  try {
+    const gameRecord = {
+      gameType: 'ai' as const,
+      difficulty: selectedDifficulty.value,
+      result: winner === Player.HUMAN ? 'win' : winner === Player.AI ? 'lose' : 'draw',
+      moves: moveHistory.value,
+      moveCount: moveCount.value,
+      aiStats: aiStats.value
+    }
+
+    await gameApi.saveGameRecord(gameRecord)
+  } catch (error) {
+    console.error('保存游戏记录失败:', error)
+    throw error
+  }
 }
 
 function restartGame() {
@@ -655,6 +707,63 @@ onMounted(() => {
   backdrop-filter: blur(10px);
   border-radius: 15px;
   padding: 20px;
+}
+
+.user-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.logged-in-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 8px 12px;
+  border-radius: 8px;
+  backdrop-filter: blur(10px);
+}
+
+.user-icon, .guest-icon {
+  font-size: 1.2rem;
+}
+
+.username {
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.save-indicator {
+  font-size: 1rem;
+  opacity: 0.8;
+}
+
+.guest-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.guest-text {
+  font-size: 0.9rem;
+  opacity: 0.8;
+}
+
+.login-prompt {
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: white;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.login-prompt:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: translateY(-1px);
 }
 
 .back-button {

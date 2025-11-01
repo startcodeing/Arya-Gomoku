@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed, reactive } from 'vue'
 import { llmApi } from '../services/llmApi'
+import { gameApi } from '../services/gameApi'
+import { useUserStore } from './user'
 import { Player, GameStatus, type Position, type BoardState } from '../types/game'
 import { createInitialGameState, makeMove, getGameStatus, BOARD_SIZE } from '../utils/gameLogic'
 
@@ -276,6 +278,39 @@ export const useLLMGameStore = defineStore('llmGame', () => {
     currentSession.value.status = 'finished'
     currentSession.value.finishedAt = new Date().toISOString()
     currentSession.value.winner = gameState.winner
+
+    // 如果用户已登录，保存游戏记录
+    const userStore = useUserStore()
+    if (userStore.isAuthenticated) {
+      try {
+        await saveLLMGameRecord()
+      } catch (error) {
+        console.error('保存LLM游戏记录失败:', error)
+        // 不显示错误给用户，避免影响游戏体验
+      }
+    }
+  }
+
+  async function saveLLMGameRecord() {
+    const userStore = useUserStore()
+    if (!userStore.isAuthenticated || !currentSession.value || !selectedModel.value) return
+
+    try {
+      const gameRecord = {
+        gameType: 'llm' as const,
+        llmModel: selectedModel.value.name,
+        result: gameState.winner === Player.HUMAN ? 'win' : 
+                gameState.winner === Player.AI ? 'lose' : 'draw',
+        moves: moveHistory.value,
+        moveCount: moveHistory.value.length,
+        modelConfig: modelConfig.value
+      }
+
+      await gameApi.saveGameRecord(gameRecord)
+    } catch (error) {
+      console.error('保存LLM游戏记录失败:', error)
+      throw error
+    }
   }
 
   function restartGame() {

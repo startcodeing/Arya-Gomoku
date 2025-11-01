@@ -9,6 +9,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"gomoku-backend/internal/model"
+	"gomoku-backend/internal/repository"
 	"gomoku-backend/internal/service"
 )
 
@@ -25,8 +26,8 @@ type GameController struct {
 }
 
 // NewGameController creates a new game controller instance
-func NewGameController() *GameController {
-	gameService := service.NewGameService()
+func NewGameController(gameRepo repository.GameRepository) *GameController {
+	gameService := service.NewGameService(gameRepo)
 	hub := service.NewHub(gameService)
 	go hub.Run()
 	

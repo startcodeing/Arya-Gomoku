@@ -9,69 +9,175 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 
+	"gomoku-backend/internal/config"
 	"gomoku-backend/internal/controller"
+	"gomoku-backend/internal/database"
+	"gomoku-backend/internal/middleware"
+	"gomoku-backend/internal/repository"
 	"gomoku-backend/internal/service"
 )
 
 func main() {
+	// Load configuration
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		log.Fatal("Failed to load configuration:", err)
+	}
+
+	// Initialize database
+	db, err := database.NewDatabase(cfg)
+	if err != nil {
+		log.Fatal("Failed to connect to database:", err)
+	}
+	defer db.Close()
+
+	// Auto migrate database
+	if err := db.AutoMigrate(); err != nil {
+		log.Fatal("Failed to migrate database:", err)
+	}
+
+	// Create indexes
+	if err := db.CreateIndexes(); err != nil {
+		log.Fatal("Failed to create indexes:", err)
+	}
+
+	// Initialize data
+	if err := db.InitializeData(); err != nil {
+		log.Fatal("Failed to initialize data:", err)
+	}
+
+	// Initialize repositories
+	_ = repository.NewUserRepository(db.DB) // TODO: 将来可能需要用到
+	gameRepo := repository.NewGameRepository(db.DB)
+	statsRepo := repository.NewStatisticsRepository(db.DB)
+
+	// Initialize services
+	llmService := service.NewLLMService()
+	authService := service.NewAuthService(db.DB)
+
+	// Initialize middleware
+	authMiddleware := middleware.NewAuthMiddleware(cfg.JWT.SecretKey, db.DB)
+
 	// Initialize Gin router
 	r := gin.Default()
 
 	// Configure CORS middleware
-	config := cors.DefaultConfig()
-	config.AllowOrigins = []string{
+	corsConfig := cors.DefaultConfig()
+	corsConfig.AllowOrigins = []string{
 		"http://localhost:5173",
 		"http://0.0.0.0:5173",
 		"http://192.168.0.109:5173",
 	}
-	config.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
-	config.AllowHeaders = []string{"Origin", "Content-Type", "Accept", "Authorization"}
-	r.Use(cors.New(config))
-
-	// Initialize services
-	llmService := service.NewLLMService()
+	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
+	corsConfig.AllowHeaders = []string{"Origin", "Content-Type", "Accept", "Authorization"}
+	r.Use(cors.New(corsConfig))
 
 	// Initialize controllers
-	aiController := controller.NewAIController()
-	gameController := controller.NewGameController()
-	llmController := controller.NewLLMController(llmService)
+	aiController := controller.NewAIController(gameRepo)
+	llmController := controller.NewLLMController(llmService, gameRepo)
+	gameController := controller.NewGameController(gameRepo)
+	authController := controller.NewAuthController(authService, authMiddleware)
+	statisticsController := controller.NewStatisticsController(gameRepo, statsRepo)
 
 	// Setup routes
 	api := r.Group("/api")
 	{
-		// AI endpoints
-		api.POST("/ai/move", aiController.GetAIMove)
-		api.GET("/ai/status", aiController.GetGameStatus)
-		api.POST("/ai/reset", aiController.ResetGame)
-		api.GET("/ai/stats", aiController.GetAIStats)
-		api.POST("/ai/cache/clear", aiController.ClearCache)
-		api.GET("/ai/difficulties", aiController.GetDifficultyLevels)
-		api.POST("/ai/benchmark", aiController.BenchmarkAI)
+		// Authentication endpoints (public)
+		auth := api.Group("/auth")
+		{
+			auth.POST("/register", authController.Register)
+			auth.POST("/login", authController.Login)
+			auth.POST("/refresh", authController.RefreshToken)
+			auth.POST("/validate", authController.ValidateToken)
+		}
 
-		// LLM endpoints
-		api.POST("/llm/start", llmController.StartGame)
-		api.POST("/llm/move", llmController.MakeMove)
-		api.GET("/llm/game/:id", llmController.GetGame)
-		api.DELETE("/llm/game/:id", llmController.DeleteGame)
-		api.GET("/llm/game/:id/history", llmController.GetGameHistory)
-		api.GET("/llm/models", llmController.GetModels)
-		api.PUT("/llm/config/:model", llmController.UpdateConfig)
-		api.GET("/llm/config/:model", llmController.GetConfig)
-		api.GET("/llm/stats", llmController.GetGameStats)
-		api.GET("/llm/health", llmController.HealthCheck)
+		// User endpoints (protected)
+		user := api.Group("/user")
+		user.Use(authMiddleware.RequireAuth())
+		{
+			user.GET("/profile", authController.GetProfile)
+			user.PUT("/profile", authController.UpdateProfile)
+			user.POST("/change-password", authController.ChangePassword)
+			user.POST("/logout", authController.Logout)
+			user.GET("/info/:id", authController.GetUserInfo) // Public user info
+		}
 
-		// PVP Room endpoints
-		api.POST("/rooms", gameController.CreateRoom)
-		api.GET("/rooms", gameController.GetActiveRooms)
-		api.GET("/rooms/:id", gameController.GetRoom)
-		api.POST("/rooms/:id/join", gameController.JoinRoom)
-		api.POST("/rooms/:id/start", gameController.StartGame)
-		api.POST("/rooms/:id/move", gameController.MakeMove)
-		api.POST("/rooms/:id/leave", gameController.LeaveRoom)
-		api.POST("/rooms/:id/ready", gameController.SetPlayerReady)
+		// AI endpoints (optionally protected)
+		ai := api.Group("/ai")
+		ai.Use(authMiddleware.OptionalAuth())
+		{
+			// Legacy AI endpoints
+			ai.POST("/move", aiController.GetAIMove)
+			ai.GET("/status", aiController.GetGameStatus)
+			ai.POST("/reset", aiController.ResetGame)
+			ai.GET("/stats", aiController.GetAIStats)
+			ai.POST("/cache/clear", aiController.ClearCache)
+			ai.GET("/difficulties", aiController.GetDifficultyLevels)
+			ai.POST("/benchmark", aiController.BenchmarkAI)
+			
+			// New AI game management endpoints (protected)
+			ai.POST("/games", authMiddleware.RequireAuth(), aiController.CreateAIGame)
+			ai.GET("/games/:id", authMiddleware.RequireAuth(), aiController.GetAIGame)
+			ai.POST("/games/:id/move", authMiddleware.RequireAuth(), aiController.MakeAIMove)
+			ai.GET("/games", authMiddleware.RequireAuth(), aiController.GetUserAIGames)
+		}
 
-		// WebSocket endpoint
-		api.GET("/ws", gameController.HandleWebSocket)
+		// LLM endpoints (optionally protected)
+		llm := api.Group("/llm")
+		llm.Use(authMiddleware.OptionalAuth())
+		{
+			llm.POST("/start", llmController.StartGame)
+			llm.POST("/move", llmController.MakeMove)
+			llm.GET("/game/:id", llmController.GetGame)
+			llm.DELETE("/game/:id", llmController.DeleteGame)
+			llm.GET("/game/:id/history", llmController.GetGameHistory)
+			llm.GET("/models", llmController.GetModels)
+			llm.PUT("/config/:model", llmController.UpdateConfig)
+			llm.GET("/config/:model", llmController.GetConfig)
+			llm.GET("/stats", llmController.GetGameStats)
+			llm.GET("/health", llmController.HealthCheck)
+			llm.GET("/cache/stats", llmController.GetCacheStats)
+			llm.DELETE("/cache", llmController.ClearCache)
+			
+			// New LLM game management endpoints
+			llm.POST("/games", authMiddleware.RequireAuth(), llmController.CreateLLMGame)
+			llm.GET("/games/:id", authMiddleware.RequireAuth(), llmController.GetLLMGame)
+			llm.POST("/games/:id/move", authMiddleware.RequireAuth(), llmController.MakeLLMMove)
+			llm.GET("/user/games", authMiddleware.RequireAuth(), llmController.GetUserLLMGames)
+		}
+
+		// PVP Room endpoints (protected)
+		rooms := api.Group("/rooms")
+		rooms.Use(authMiddleware.RequireAuth())
+		{
+			rooms.POST("", gameController.CreateRoom)
+			rooms.GET("", gameController.GetActiveRooms)
+			rooms.GET("/:id", gameController.GetRoom)
+			rooms.POST("/:id/join", gameController.JoinRoom)
+			rooms.POST("/:id/start", gameController.StartGame)
+			rooms.POST("/:id/move", gameController.MakeMove)
+			rooms.POST("/:id/leave", gameController.LeaveRoom)
+			rooms.POST("/:id/ready", gameController.SetPlayerReady)
+		}
+
+		// Statistics endpoints (protected)
+		stats := api.Group("/statistics")
+		stats.Use(authMiddleware.RequireAuth())
+		{
+			stats.GET("/games", statisticsController.GetUserGameHistory)
+			stats.GET("/user", statisticsController.GetUserGameStats)
+			stats.GET("/system", authMiddleware.RequireAdmin(), statisticsController.GetSystemStatistics)
+			stats.GET("/date-range", statisticsController.GetGameStatsByDateRange)
+			stats.GET("/top-players", statisticsController.GetTopPlayers)
+			stats.GET("/search", statisticsController.SearchGames)
+			stats.GET("/game-types", statisticsController.GetGameTypeStatistics)
+			stats.GET("/difficulties", statisticsController.GetDifficultyStatistics)
+			stats.GET("/export", statisticsController.ExportGameData)
+			stats.DELETE("/games/:id", statisticsController.DeleteGameRecord)
+		}
+
+		// WebSocket endpoint (protected)
+		api.GET("/ws", authMiddleware.RequireAuth(), gameController.HandleWebSocket)
 	}
 
 	// Start server on port 8081, bind to all interfaces for LAN access

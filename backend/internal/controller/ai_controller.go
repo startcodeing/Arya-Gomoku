@@ -3,13 +3,17 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"gomoku-backend/internal/model"
+	"gomoku-backend/internal/repository"
 	"gomoku-backend/internal/service"
 )
 
@@ -17,13 +21,15 @@ import (
 type AIController struct {
 	aiService         *service.AIService
 	enhancedAIService *service.EnhancedAIService
+	gameRepo          repository.GameRepository
 }
 
 // NewAIController creates a new AI controller instance
-func NewAIController() *AIController {
+func NewAIController(gameRepo repository.GameRepository) *AIController {
 	return &AIController{
 		aiService:         service.NewAIService(),
 		enhancedAIService: service.NewEnhancedAIService(),
+		gameRepo:          gameRepo,
 	}
 }
 
@@ -194,6 +200,333 @@ func (ac *AIController) ClearCache(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": "Transposition table cleared successfully",
+	})
+}
+
+// CreateAIGame handles POST /api/ai/games requests
+// Creates a new AI game session
+func (ac *AIController) CreateAIGame(c *gin.Context) {
+	type CreateGameRequest struct {
+		Difficulty string `json:"difficulty"`
+	}
+
+	var req CreateGameRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid request format",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Get user ID from JWT token
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"success": false,
+			"error":   "User not authenticated",
+		})
+		return
+	}
+
+	// Set default difficulty
+	if req.Difficulty == "" {
+		req.Difficulty = "medium"
+	}
+
+	// Convert difficulty string to Difficulty type
+	var difficulty model.Difficulty
+	switch req.Difficulty {
+	case "easy":
+		difficulty = model.DifficultyEasy
+	case "medium":
+		difficulty = model.DifficultyMedium
+	case "hard":
+		difficulty = model.DifficultyHard
+	case "expert":
+		difficulty = model.DifficultyExpert
+	default:
+		difficulty = model.DifficultyMedium
+	}
+
+	// Create new AI game
+	game := &model.AIGame{
+		ID:         uuid.New().String(),
+		UserID:     userID.(string),
+		Difficulty: difficulty,
+		Status:     model.GameStatusPlaying,
+		Moves:      []model.GameMove{},
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	}
+
+	// Save to database
+	ctx := context.Background()
+	if err := ac.gameRepo.CreateAIGame(ctx, game); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to create game",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"success": true,
+		"data":    game,
+	})
+}
+
+// GetAIGame handles GET /api/ai/games/:id requests
+// Retrieves an AI game by ID
+func (ac *AIController) GetAIGame(c *gin.Context) {
+	gameID := c.Param("id")
+	if gameID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Game ID is required",
+		})
+		return
+	}
+
+	ctx := context.Background()
+	game, err := ac.gameRepo.GetAIGameByID(ctx, gameID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   "Game not found",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    game,
+	})
+}
+
+// MakeAIMove handles POST /api/ai/games/:id/move requests
+// Makes a move in an AI game and gets AI response
+func (ac *AIController) MakeAIMove(c *gin.Context) {
+	gameID := c.Param("id")
+	if gameID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Game ID is required",
+		})
+		return
+	}
+
+	type MoveRequest struct {
+		X int `json:"x" binding:"required,min=0,max=14"`
+		Y int `json:"y" binding:"required,min=0,max=14"`
+	}
+
+	var req MoveRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Invalid move format",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	ctx := context.Background()
+	
+	// Get game from database
+	game, err := ac.gameRepo.GetAIGameByID(ctx, gameID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   "Game not found",
+		})
+		return
+	}
+
+	// Check if game is still active
+	if game.Status != model.GameStatusPlaying {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Game is not active",
+		})
+		return
+	}
+
+	// Reconstruct board from moves
+	board := make([][]int, 15)
+	for i := range board {
+		board[i] = make([]int, 15)
+	}
+	for _, move := range game.Moves {
+		board[move.Y][move.X] = move.Player
+	}
+
+	// Validate move
+	if board[req.Y][req.X] != 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Position already occupied",
+		})
+		return
+	}
+
+	// Make human move
+	board[req.Y][req.X] = 1
+	humanMove := model.GameMove{
+		X:         req.X,
+		Y:         req.Y,
+		Player:    1,
+		Timestamp: time.Now(),
+	}
+	game.Moves = append(game.Moves, humanMove)
+
+	// Check if human wins
+	boardModel := &model.Board{Grid: board, Size: 15}
+	humanMoveModel := &model.Move{X: req.X, Y: req.Y, Player: 1}
+	gameState := boardModel.GetGameState(humanMoveModel)
+
+	if gameState.Status != "playing" {
+		if gameState.Status == "win" && gameState.Winner == 1 {
+			game.Status = model.GameStatusCompleted
+		} else if gameState.Status == "win" && gameState.Winner == 2 {
+			game.Status = model.GameStatusCompleted
+		} else {
+			game.Status = model.GameStatusCompleted
+		}
+		endTime := time.Now()
+		game.EndedAt = &endTime
+		
+		// Update game in database
+		if err := ac.gameRepo.UpdateAIGame(ctx, game); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   "Failed to update game",
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"success":    true,
+			"data":       game,
+			"gameStatus": gameState.Status,
+			"winner":     gameState.Winner,
+		})
+		return
+	}
+
+	// Get AI move
+	var difficulty service.Difficulty
+	switch game.Difficulty {
+	case "easy":
+		difficulty = service.Easy
+	case "medium":
+		difficulty = service.Medium
+	case "hard":
+		difficulty = service.Hard
+	case "expert":
+		difficulty = service.Expert
+	default:
+		difficulty = service.Medium
+	}
+
+	lastMove := model.Move{X: req.X, Y: req.Y}
+	aiMove := ac.enhancedAIService.GetAIMove(board, lastMove, difficulty)
+
+	// Make AI move
+	board[aiMove.Y][aiMove.X] = 2
+	aiMoveRecord := model.GameMove{
+		X:         aiMove.X,
+		Y:         aiMove.Y,
+		Player:    2,
+		Timestamp: time.Now(),
+	}
+	game.Moves = append(game.Moves, aiMoveRecord)
+
+	// Check if AI wins
+	aiMoveModel := &model.Move{X: aiMove.X, Y: aiMove.Y, Player: 2}
+	gameState = boardModel.GetGameState(aiMoveModel)
+
+	if gameState.Status != "playing" {
+		if gameState.Status == "win" && gameState.Winner == 2 {
+			game.Status = model.GameStatusCompleted
+		} else if gameState.Status == "win" && gameState.Winner == 1 {
+			game.Status = model.GameStatusCompleted
+		} else {
+			game.Status = model.GameStatusCompleted
+		}
+		endTime := time.Now()
+		game.EndedAt = &endTime
+	}
+
+	game.UpdatedAt = time.Now()
+
+	// Update game in database
+	if err := ac.gameRepo.UpdateAIGame(ctx, game); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to update game",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":    true,
+		"data":       game,
+		"aiMove":     aiMove,
+		"gameStatus": gameState.Status,
+		"winner":     gameState.Winner,
+	})
+}
+
+// GetUserAIGames handles GET /api/ai/games requests
+// Retrieves AI games for a user
+func (ac *AIController) GetUserAIGames(c *gin.Context) {
+	userID := c.Query("user_id")
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "User ID is required",
+		})
+		return
+	}
+
+	page := 1
+	limit := 10
+	if p := c.Query("page"); p != "" {
+		if parsed, err := strconv.Atoi(p); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+	if l := c.Query("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	offset := (page - 1) * limit
+
+	ctx := context.Background()
+	games, total, err := ac.gameRepo.GetUserAIGames(ctx, userID, offset, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to retrieve games",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"games": games,
+			"total": total,
+			"page":  page,
+			"limit": limit,
+		},
 	})
 }
 

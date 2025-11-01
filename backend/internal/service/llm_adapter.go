@@ -63,13 +63,8 @@ func (d *DeepSeekAdapter) GetMove(board [][]int, lastMove model.Move, config mod
 		"max_tokens":  1000,
 	}
 
-	// Add custom parameters if provided
-	if params, ok := config.Parameters["temperature"]; ok {
-		requestBody["temperature"] = params
-	}
-	if params, ok := config.Parameters["max_tokens"]; ok {
-		requestBody["max_tokens"] = params
-	}
+	// Use default parameters (config.Parameters field doesn't exist in current model)
+	// TODO: Add parameters field to LLMConfig model if needed
 
 	jsonData, err := json.Marshal(requestBody)
 	if err != nil {
@@ -77,9 +72,9 @@ func (d *DeepSeekAdapter) GetMove(board [][]int, lastMove model.Move, config mod
 	}
 
 	// Create HTTP request
-	endpoint := config.Endpoint
-	if endpoint == "" {
-		endpoint = "https://api.deepseek.com/v1/chat/completions"
+	endpoint := "https://api.deepseek.com/v1/chat/completions"
+	if config.BaseURL != nil && *config.BaseURL != "" {
+		endpoint = *config.BaseURL + "/v1/chat/completions"
 	}
 
 	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(jsonData))
@@ -314,7 +309,7 @@ func (o *OllamaAdapter) GetMove(board [][]int, lastMove model.Move, config model
 
 	// Prepare request payload for Ollama API
 	requestBody := map[string]interface{}{
-		"model":  config.ModelName,
+		"model":  config.Model,
 		"prompt": prompt,
 		"stream": false,
 		"options": map[string]interface{}{
@@ -323,13 +318,8 @@ func (o *OllamaAdapter) GetMove(board [][]int, lastMove model.Move, config model
 		},
 	}
 
-	// Add custom parameters if provided
-	if params, ok := config.Parameters["temperature"]; ok {
-		requestBody["options"].(map[string]interface{})["temperature"] = params
-	}
-	if params, ok := config.Parameters["num_predict"]; ok {
-		requestBody["options"].(map[string]interface{})["num_predict"] = params
-	}
+	// Use default parameters (config.Parameters field doesn't exist in current model)
+	// TODO: Add parameters field to LLMConfig model if needed
 
 	jsonData, err := json.Marshal(requestBody)
 	if err != nil {
@@ -337,9 +327,9 @@ func (o *OllamaAdapter) GetMove(board [][]int, lastMove model.Move, config model
 	}
 
 	// Create HTTP request
-	endpoint := config.Endpoint
-	if endpoint == "" {
-		endpoint = "http://localhost:11434/api/generate"
+	endpoint := "http://localhost:11434/api/generate"
+	if config.BaseURL != nil && *config.BaseURL != "" {
+		endpoint = *config.BaseURL + "/api/generate"
 	}
 
 	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(jsonData))
@@ -400,10 +390,10 @@ func (o *OllamaAdapter) GetMove(board [][]int, lastMove model.Move, config model
 // ValidateConfig validates Ollama configuration
 func (o *OllamaAdapter) ValidateConfig(config model.LLMConfig) error {
 	// Ollama doesn't require API key, but needs model name
-	if config.ModelName == "" {
+	if config.Model == "" {
 		return errors.New("model name is required for Ollama")
 	}
-	// Endpoint is optional, will use default if not provided
+	// BaseURL is optional, will use default if not provided
 	return nil
 }
 

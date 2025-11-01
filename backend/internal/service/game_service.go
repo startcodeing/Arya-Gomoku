@@ -3,24 +3,28 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sync"
 	"time"
 
 	"gomoku-backend/internal/model"
+	"gomoku-backend/internal/repository"
 )
 
 // GameService manages game rooms and online matches for PVP feature
 type GameService struct {
-	rooms map[string]*model.Room
-	mutex sync.RWMutex
+	rooms    map[string]*model.Room
+	mutex    sync.RWMutex
+	gameRepo repository.GameRepository
 }
 
-// NewGameService creates a new game service instance
-func NewGameService() *GameService {
+// NewGameService creates a new game service
+func NewGameService(gameRepo repository.GameRepository) *GameService {
 	return &GameService{
-		rooms: make(map[string]*model.Room),
+		rooms:    make(map[string]*model.Room),
+		gameRepo: gameRepo,
 	}
 }
 
@@ -180,10 +184,42 @@ func (gs *GameService) StartGame(roomID string) error {
 		return fmt.Errorf("cannot start game: not enough players")
 	}
 	
-	room.Game = model.NewPVPGame(room)
+	room.Game = model.NewPVPGameSession(room)
 	room.Status = "playing"
 	
 	return nil
+}
+
+// SaveGameResult 保存游戏结果到数据库
+func (gs *GameService) SaveGameResult(room *model.Room) error {
+	if room.Game == nil {
+		return fmt.Errorf("游戏会话不存在")
+	}
+
+	// 创建PVP游戏记录
+	game := &model.PVPGame{
+		RoomID:    room.ID,
+		Status:    model.GameStatusCompleted,
+		BoardSize: 15, // 默认棋盘大小
+		StartedAt: &room.Game.StartedAt,
+		EndedAt:   room.Game.EndedAt,
+		MoveCount: room.Game.MoveCount,
+	}
+
+	// 设置胜者
+	if room.Game.Winner != "" {
+		// 查找获胜玩家的UUID
+		for _, player := range room.Players {
+			if player.ID == room.Game.Winner {
+				// 这里需要将string ID转换为UUID，但目前Player使用的是string ID
+				// 暂时跳过WinnerID设置，因为需要用户系统的UUID
+				break
+			}
+		}
+	}
+
+	// 保存到数据库
+	return gs.gameRepo.CreatePVPGame(context.Background(), game)
 }
 
 // LeaveRoom removes a player from a room
@@ -264,6 +300,11 @@ func (gs *GameService) HandlePlayerDisconnect(roomID, playerID string) error {
 		}
 		now := time.Now()
 		room.Game.EndedAt = &now
+
+		// 保存游戏结果到数据库
+		if err := gs.SaveGameResult(room); err != nil {
+			log.Printf("Error saving game result on disconnect: %v", err)
+		}
 	}
 	
 	// Remove player from room to allow reuse

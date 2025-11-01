@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// LLMGame represents a game session with LLM
-type LLMGame struct {
+// LLMGameSession represents a game session with LLM (legacy)
+type LLMGameSession struct {
 	ID            string    `json:"id"`            // Unique game identifier
 	ModelName     string    `json:"modelName"`     // LLM model name (deepseek, chatgpt, ollama)
 	Difficulty    string    `json:"difficulty"`    // Difficulty level: easy, medium, hard
@@ -31,8 +31,8 @@ type LLMMove struct {
 	Timestamp  time.Time `json:"timestamp"`            // Move timestamp
 }
 
-// LLMConfig represents LLM model configuration
-type LLMConfig struct {
+// LLMModelConfig represents LLM model configuration (legacy)
+type LLMModelConfig struct {
 	ModelName  string                 `json:"modelName"`            // Model identifier
 	APIKey     string                 `json:"apiKey,omitempty"`     // API key (encrypted)
 	Endpoint   string                 `json:"endpoint,omitempty"`   // Custom API endpoint
@@ -89,9 +89,9 @@ type LLMConfigResponse struct {
 	Error   string `json:"error,omitempty"`   // Error details if any
 }
 
-// NewLLMGame creates a new LLM game instance
-func NewLLMGame(modelName, difficulty string) *LLMGame {
-	return &LLMGame{
+// NewLLMGameSession creates a new LLM game instance
+func NewLLMGameSession(modelName, difficulty string) *LLMGameSession {
+	return &LLMGameSession{
 		ID:            generateGameID(),
 		ModelName:     modelName,
 		Difficulty:    difficulty,
@@ -105,13 +105,13 @@ func NewLLMGame(modelName, difficulty string) *LLMGame {
 }
 
 // AddMove adds a move to the game history
-func (g *LLMGame) AddMove(move LLMMove) {
+func (g *LLMGameSession) AddMove(move LLMMove) {
 	g.Moves = append(g.Moves, move)
 	g.UpdatedAt = time.Now()
 }
 
 // GetLastMove returns the last move made in the game
-func (g *LLMGame) GetLastMove() *LLMMove {
+func (g *LLMGameSession) GetLastMove() *LLMMove {
 	if len(g.Moves) == 0 {
 		return nil
 	}
@@ -119,7 +119,7 @@ func (g *LLMGame) GetLastMove() *LLMMove {
 }
 
 // IsGameFinished checks if the game is finished
-func (g *LLMGame) IsGameFinished() bool {
+func (g *LLMGameSession) IsGameFinished() bool {
 	return g.Status == "finished" || g.Status == "error"
 }
 

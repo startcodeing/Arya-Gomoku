@@ -557,6 +557,11 @@ func (c *Client) handleMoveMessage(wsMessage *model.WSMessage) {
 
 		// Check if game is finished
 		if room.Game.Status == "finished" {
+			// 保存游戏结果到数据库
+			if err := c.Hub.gameService.SaveGameResult(room); err != nil {
+				log.Printf("Error saving game result: %v", err)
+			}
+
 			c.Hub.BroadcastToRoom(c.RoomID, model.WSMessage{
 				Type: "game_ended",
 				Data: updateData,
@@ -710,6 +715,11 @@ func (c *Client) handleDrawResponseMessage(wsMessage *model.WSMessage) {
         now := time.Now()
         room.Game.EndedAt = &now
 
+        // 保存游戏结果到数据库
+        if err := c.Hub.gameService.SaveGameResult(room); err != nil {
+            log.Printf("Error saving game result: %v", err)
+        }
+
         // 广播游戏结束（平局）
         updateData := model.GameUpdateData{
             Game: room.Game,
@@ -763,6 +773,11 @@ func (c *Client) handleResignMessage(wsMessage *model.WSMessage) {
     room.Game.Winner = winnerID
     now := time.Now()
     room.Game.EndedAt = &now
+
+    // 保存游戏结果到数据库
+    if err := c.Hub.gameService.SaveGameResult(room); err != nil {
+        log.Printf("Error saving game result: %v", err)
+    }
 
     updateData := model.GameUpdateData{Game: room.Game}
     c.Hub.BroadcastToRoom(c.RoomID, model.WSMessage{
