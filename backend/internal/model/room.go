@@ -33,15 +33,15 @@ type PVPPlayer struct {
 // PVPGameSession represents a PVP game session
 type PVPGameSession struct {
 	ID            string     `json:"id"`
-	RoomID        string     `json:"room_id"`
+	RoomID        string     `json:"roomId"`
 	Status        string     `json:"status"`
 	Board         [][]int    `json:"board"`
-	CurrentPlayer string     `json:"current_player"`
+	CurrentPlayer string     `json:"currentPlayer"`
 	Winner        string     `json:"winner"`
-	MoveCount     int        `json:"move_count"`
+	MoveCount     int        `json:"moveCount"`
 	Moves         []*PVPMove `json:"moves"`
-	StartedAt     time.Time  `json:"started_at"`
-	EndedAt       *time.Time `json:"ended_at,omitempty"`
+	StartedAt     time.Time  `json:"startedAt"`
+	EndedAt       *time.Time `json:"endedAt,omitempty"`
 }
 
 // PVPMove represents a move in PVP game
