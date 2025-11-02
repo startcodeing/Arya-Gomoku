@@ -324,4 +324,5 @@ export const gameApi = {
   }
 }
 
+export { api }
 export default api

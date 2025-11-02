@@ -38,7 +38,15 @@ export class WebSocketService {
           return
         }
         this.isManualClose = false
-        const url = `${this.getWebSocketUrl()}?roomId=${roomId}&playerId=${playerId}`
+        
+        // Get authentication token
+        const token = localStorage.getItem('auth_token')
+        if (!token) {
+          reject(new Error('未找到认证令牌，请先登录'))
+          return
+        }
+        
+        const url = `${this.getWebSocketUrl()}?roomId=${roomId}&playerId=${playerId}&token=${encodeURIComponent(token)}`
         
         this.ws = new WebSocket(url)
         
